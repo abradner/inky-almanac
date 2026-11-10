@@ -1,0 +1,12 @@
+# Local tooling: `mise install` gives you mpremote (to talk to the frame over
+# USB) and a Python for the frame's control-flow tests.
+#   mise run frame-test
+#   mpremote connect /dev/cu.usbmodem* ...
+[tools]
+python = "3.13"
+"pipx:mpremote" = "1.29.0"
+"pipx:pytest" = "8.4.1"
+
+[tasks.frame-test]
+description = "Frame control-flow tests (CPython, board modules stubbed)"
+run = "pytest -q frame/tests"

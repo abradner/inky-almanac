@@ -1,0 +1,18 @@
+# Real WiFi credentials never enter the repo.
+WIFI_CONFIG.py
+secrets.py
+*.psk
+*.uf2
+__pycache__/
+.pytest_cache/
+.venv/
+cache/
+# Over-the-air release: generated and signed at deploy time, never committed.
+server/ota/*
+!server/ota/.gitkeep
+OTA_KEY.py
+# Your own values (see the .example files).
+frame/config.py
+deploy.env
+*.key
+ota-key.txt

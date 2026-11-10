@@ -1,0 +1,13 @@
+# Copy to config.py (gitignored) and fill in. Installed on the frame by
+# scripts/deploy-frame.sh; never updated over the air.
+
+# "wifi": the frame polls SERVER on its own schedule (the normal mode).
+# "usb":  the frame waits; the renderer on the machine it's plugged into pushes
+#         each poster over the serial cable. Use while the frame's WiFi network
+#         can't reach the renderer.
+MODE = "wifi"
+
+# Where the renderer runs (WiFi mode). An IP is more robust than a name on a
+# home network: a firewall rule letting the frame in is usually per-address,
+# and a DNS hiccup otherwise breaks every refresh silently.
+SERVER = "http://192.0.2.10:8077"
