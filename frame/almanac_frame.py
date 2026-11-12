@@ -35,7 +35,11 @@ CYCLE_DEADLINE_MS = 5 * 60 * 1000  # a cycle normally takes ~45 s
 ERROR_SCREEN_AFTER_S = 6 * 3600
 
 graphics = None
+decoder = None
 sd_ok = False
+BOOT_MS = None  # ticks_ms at boot, for uptime
+FRESH_HEAP_MS = 10 * 60 * 1000  # a MemoryError this soon after boot isn't fragmentation
+MAX_UPTIME_MS = 24 * 3600 * 1000  # on USB, start each day on a clean heap
 
 
 # ------------------------------------------------------------------ storage
@@ -358,14 +362,46 @@ def display():
     return graphics
 
 
+def png_decoder():
+    """One PNG decoder for the life of the boot.
+
+    pngdec.PNG() needs a single ~48 KB block. On USB power the board can run
+    for days, and once the heap fragments that block stops being available
+    ("memory allocation failed, allocating 48156 bytes", 12 Nov 2026).
+    Allocating it once, at boot while the heap is clean, and reusing it
+    removes the per-draw allocation."""
+    global decoder
+    if decoder is None:
+        import pngdec
+
+        gc.collect()
+        decoder = pngdec.PNG(display())
+    return decoder
+
+
 def show_png(path):
     import pngdec
 
     g = display()
-    png = pngdec.PNG(g)
+    png = png_decoder()
     png.open_file(path)
     png.decode(0, 0, mode=pngdec.PNG_COPY)  # indices are already panel inks
     g.update()
+
+
+def uptime_ms():
+    return time.ticks_diff(time.ticks_ms(), BOOT_MS) if BOOT_MS is not None else 0
+
+
+def restart_fresh(state, why):
+    """Reset to get a clean heap; the boot after it redraws."""
+    log("restarting:", why)
+    state["force_next"] = True
+    try:
+        save_state(state)
+    except OSError:
+        pass
+    machine.reset()
 
 
 def show_error(message, since):
@@ -451,28 +487,40 @@ def cycle(state, force=False, shuffle=False):
         # Never trust the server to keep us sane: 0 would spin, huge would
         # overflow the RTC alarm's day-of-month.
         return max(5, min(720, int(info.get("sleep_minutes", 60))))
+    except MemoryError as e:
+        # Heap fragmentation after a long uptime. A reset is the only cure;
+        # but straight after boot that won't help, so fall through to the
+        # normal failure path rather than reset-looping.
+        if uptime_ms() > FRESH_HEAP_MS:
+            restart_fresh(state, "out of memory (%r)" % (e,))
+        return _failed(state, e)
     except Exception as e:
-        n = state.get("fail_count", 0)
-        state["fail_count"] = n + 1
-        if time.localtime()[0] < 2025:  # clock not set yet: don't start the 6 h timer
-            state.pop("fail_since", None)
-            since = None
-        else:
-            since = state.setdefault("fail_since", time.time())
-        log("cycle failed (%d):" % (n + 1), repr(e))
-        if since and time.time() - since > ERROR_SCREEN_AFTER_S and not state.get("error_shown"):
-            try:
-                show_error(repr(e), since)
-                state["error_shown"] = True
-                state["hash"] = None  # redraw the poster as soon as it's back
-            except Exception as e2:
-                log("error screen failed:", repr(e2))
-        return RETRY_MINUTES[min(n, len(RETRY_MINUTES) - 1)]
+        return _failed(state, e)
     finally:
         if dog:
             dog.deinit()
         wifi_off()
         inky_frame.led_busy.off()
+
+
+def _failed(state, e):
+    """Count a failed cycle; returns minutes until the retry."""
+    n = state.get("fail_count", 0)
+    state["fail_count"] = n + 1
+    if time.localtime()[0] < 2025:  # clock not set yet: don't start the 6 h timer
+        state.pop("fail_since", None)
+        since = None
+    else:
+        since = state.setdefault("fail_since", time.time())
+    log("cycle failed (%d):" % (n + 1), repr(e))
+    if since and time.time() - since > ERROR_SCREEN_AFTER_S and not state.get("error_shown"):
+        try:
+            show_error(repr(e), since)
+            state["error_shown"] = True
+            state["hash"] = None  # redraw the poster as soon as it's back
+        except Exception as e2:
+            log("error screen failed:", repr(e2))
+    return RETRY_MINUTES[min(n, len(RETRY_MINUTES) - 1)]
 
 
 def rest(minutes):
@@ -508,6 +556,8 @@ def rest(minutes):
 
 
 def main():
+    global BOOT_MS
+    BOOT_MS = time.ticks_ms()
     inky_frame.pcf_to_pico_rtc()  # the external RTC keeps time across power-offs
     mount_sd()
     state = load_state()
@@ -518,7 +568,13 @@ def main():
     # poster is unchanged, so a power cycle visibly does something.
     force = press == "a" or (press is None and not rtc_wake) or bool(state.pop("force_next", False))
     log("boot", "sd" if sd_ok else "no-sd", "rtc-wake" if rtc_wake else "power-on", press or "")
+    try:
+        png_decoder()  # claim the decoder's big block while the heap is clean
+    except Exception as e:
+        log("decoder preallocation failed:", repr(e))
     while True:
+        if press is None and uptime_ms() > MAX_UPTIME_MS:
+            restart_fresh(state, "daily fresh start after %d h" % (uptime_ms() // 3600000))
         if press:
             log("button", press)
             inky_frame.button_a.led_on() if press == "a" else inky_frame.button_b.led_on()
