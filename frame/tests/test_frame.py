@@ -1,4 +1,6 @@
 import json
+import sys
+import types
 
 import pytest
 
@@ -209,3 +211,67 @@ def test_wifi_gives_up_after_two_tries(frame, monkeypatch):
     with pytest.raises(OSError):
         frame.connect_wifi()
     assert len(joins) == 2
+
+
+# ---- memory: one decoder per boot, fresh heap on MemoryError -------------------
+
+
+def test_png_decoder_is_allocated_once_and_reused(frame, monkeypatch, tmp_path):
+    made = []
+
+    class PNG:
+        def __init__(self, g):
+            made.append(1)
+
+        def open_file(self, p):
+            pass
+
+        def decode(self, *a, **k):
+            pass
+
+    class G:
+        def update(self):
+            pass
+
+    monkeypatch.setitem(sys.modules, "pngdec", types.SimpleNamespace(PNG=PNG, PNG_COPY=2))
+    monkeypatch.setattr(frame, "display", lambda: G())
+    frame.decoder = None
+    for _ in range(3):
+        frame.show_png(str(tmp_path / "f.png"))
+    assert made == [1]
+
+
+def test_out_of_memory_after_a_long_uptime_restarts_with_a_redraw(frame, monkeypatch):
+    stub_network(frame, monkeypatch, info={"hash": "h2", "size": 1, "sleep_minutes": 60})
+
+    def oom(path):
+        raise MemoryError("memory allocation failed, allocating 48156 bytes")
+
+    monkeypatch.setattr(frame, "show_png", oom)
+    monkeypatch.setattr(frame, "uptime_ms", lambda: frame.FRESH_HEAP_MS + 1)
+    state = {}
+    frame.cycle(state)
+    assert frame.resets == [1] and state["force_next"] is True
+
+
+def test_out_of_memory_right_after_boot_does_not_reset_loop(frame, monkeypatch):
+    stub_network(frame, monkeypatch, info={"hash": "h2", "size": 1, "sleep_minutes": 60})
+    monkeypatch.setattr(frame, "show_png", lambda p: (_ for _ in ()).throw(MemoryError("x")))
+    monkeypatch.setattr(frame, "uptime_ms", lambda: 1000)
+    minutes = frame.cycle({})
+    assert frame.resets == [] and minutes == frame.RETRY_MINUTES[0]
+
+
+def test_a_day_of_uptime_starts_the_next_wake_on_a_fresh_heap(frame, monkeypatch):
+    frame.inky.rtc_wake = True
+    monkeypatch.setattr(frame, "uptime_ms", lambda: frame.MAX_UPTIME_MS + 1)
+    calls = []
+    monkeypatch.setattr(frame, "cycle", lambda *a, **k: calls.append(1) or 60)
+
+    def stop(minutes):
+        raise Stop
+
+    monkeypatch.setattr(frame, "rest", stop)
+    with pytest.raises(Stop):
+        frame.main()
+    assert frame.resets  # restarted before working
