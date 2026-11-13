@@ -549,12 +549,13 @@ def check_alert(state=None):
 
 
 def alert_redraw_due(state, new):
-    """A changed alert redraws at once when a warning first appears; further
-    changes (reissues, moving storms, edge-of-radius flicker) at most every
-    ALERT_MIN_GAP_S, so the panel can't flash itself to death."""
+    """A changed alert redraws at once when a warning first appears or when
+    the last one clears (back to the photo); other changes (reissues, moving
+    storms, edge-of-radius flicker) at most every ALERT_MIN_GAP_S, so the
+    panel can't flash itself to death."""
     if new is None or new == state.get("alert", ""):
         return False
-    if not state.get("alert"):
+    if not state.get("alert") or not new:
         return True
     return time.time() - state.get("alert_drawn_at", 0) >= ALERT_MIN_GAP_S
 

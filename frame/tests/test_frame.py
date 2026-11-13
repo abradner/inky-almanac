@@ -359,3 +359,10 @@ def test_alert_check_is_watchdogged_and_restarts_on_oom(frame, monkeypatch):
     monkeypatch.setattr(frame, "get_json", lambda p: (_ for _ in ()).throw(MemoryError("frag")))
     monkeypatch.setattr(frame, "uptime_ms", lambda: frame.FRESH_HEAP_MS + 1)
     assert frame.check_alert({}) is None and frame.resets == [1]
+
+
+def test_a_cleared_alert_redraws_at_once(frame, monkeypatch):
+    monkeypatch.setattr(__import__("time"), "time", lambda: 10_000)
+    recent = {"alert": "storm-1", "alert_drawn_at": 10_000 - 60}
+    assert frame.alert_redraw_due(recent, "")  # back to the photo now, not in 10 min
+    assert not frame.alert_redraw_due(recent, "storm-2")  # a reissue still waits

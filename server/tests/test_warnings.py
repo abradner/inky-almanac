@@ -300,3 +300,28 @@ def test_bom_area_is_carried_separately():
 ])
 def test_commons_titles_lose_their_catalogue_junk(raw, tidy):
     assert photos.tidy_title(raw) == tidy
+
+
+# ---- advice is a notice, cancellations show nothing ----------------------------
+
+
+def test_advice_level_rfs_and_ses_are_broad_notices():
+    from test_hazards_bom import RFS, ses_alert, hazardwatch_html, square, HOME
+
+    rfs = {"features": [dict(RFS["features"][0], properties={"title": "X, Lane Cove", "category": "Advice"})]}
+    assert not hz.rfs_hazards(rfs, *HOME, radius_km=30)[0].specific
+    watch = {"features": [dict(RFS["features"][0], properties={"title": "X, Lane Cove", "category": "Watch and Act"})]}
+    assert hz.rfs_hazards(watch, *HOME, radius_km=30)[0].specific
+    html = hazardwatch_html([ses_alert("s1", "Advice", "Sydney"), ses_alert("s2", "Watch and Act", "Tempe")],
+                            [{"geometry": square(151.21, -33.87), "properties": {"alertIdentifier": i}} for i in ("s1", "s2")])
+    got = {h.where: h.specific for h in hz.ses_hazards(hz.hazardwatch_data(html), *HOME, 30)}
+    assert got == {"Sydney": False, "Tempe": True}
+    advice_only = hz.ses_hazards(hz.hazardwatch_data(html.replace("Watch and Act", "Advice")), *HOME, 30)
+    assert hz.alert_id(advice_only) == ""  # advice alone never triggers a fast refresh
+
+
+def test_a_cancellation_page_yields_no_map():
+    png = map_png()
+    html = "<h1>Cancellation of Severe Thunderstorm Warning</h1>" + page(png)
+    assert hz.page_map(html) == (None, None)
+    assert hz.page_map(page(png))[0] == png
