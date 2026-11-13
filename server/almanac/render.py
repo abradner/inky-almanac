@@ -12,7 +12,7 @@ from pathlib import Path
 from PIL import Image, ImageDraw, ImageEnhance, ImageFont
 
 from . import astro, conditions as cond_mod, icons, weather
-from .dither import atkinson, nearest
+from .dither import atkinson, map_inks
 from .palette import BLACK, BLUE, GREEN, INK_RGB, ORANGE, PNG_RGB, RED, WHITE, YELLOW, _flat, new_canvas, palette_image
 
 W, H = 800, 480
@@ -141,20 +141,17 @@ def draw_photo(canvas, photo):
         d.rectangle([box[0] - 3, box[1] - 3, box[2] + 2, box[3] + 2], outline=BLACK, width=2)
 
 
-MAP_LAND_INK = None  # land stays white: the map's blue labels need the contrast
-
-
 def draw_warning_map(canvas, warning):
     """A BOM warning's threat-area map in place of the photo: fitted whole
-    (it is a map, so no cropping) and mapped to the nearest inks without
-    dithering, which keeps its labels and borders crisp."""
+    (it is a map, so no cropping), each of BOM's map colours given a fixed
+    ink (dither.map_ink), no dithering, so labels and borders stay crisp."""
     import io
 
     img = Image.open(io.BytesIO(warning["png"])).convert("RGB")
     a = img.width / img.height
     w, h = (PHOTO_W, int(PHOTO_W / a)) if a > PHOTO_W / H else (int(H * a), H)
     img = img.resize((w, h), Image.LANCZOS)
-    canvas.paste(nearest(img, INK_RGB, _flat(PNG_RGB), water_ink=BLUE, land_ink=MAP_LAND_INK), ((PHOTO_W - w) // 2, (H - h) // 2))
+    canvas.paste(map_inks(img, _flat(PNG_RGB)), ((PHOTO_W - w) // 2, (H - h) // 2))
 
 
 def _placeholder_photo(d):
@@ -373,8 +370,8 @@ def badges_for(cond):
     shown = cond.warning["title"] if getattr(cond, "warning", None) else None
     for h in [h for h in hazards if h.level == "emergency"]:
         out.append(_badge(hazard_text(h), *_AWS["emergency"]))
-    if cond.fire_ban:
-        out.append(_badge("TOTAL FIRE BAN", RED, WHITE, small=True))
+    # Specific hazards before every broad notice, so a fire ban can never push
+    # a nearby fire out of the (short, over a map) list.
     for h in [h for h in hazards if h.level != "emergency" and h.specific]:
         if h.source == "BOM":  # the warning system's colours don't apply to BOM warnings
             if h.where != shown:  # the map and caption already say this one
@@ -383,6 +380,8 @@ def badges_for(cond):
             out.append(_badge(hazard_text(h), *_AWS[h.level]))
     if cond.unavailable:  # say so, rather than look like a quiet day
         out.append(_badge("NO LIVE HAZARD DATA: " + ", ".join(cond.unavailable), WHITE, BLACK, small=True))
+    if cond.fire_ban:
+        out.append(_badge("TOTAL FIRE BAN", RED, WHITE, small=True))
     for h in [h for h in hazards if h.level != "emergency" and not h.specific]:
         out.append(_badge(hazard_text(h), WHITE, BLACK, small=True))  # region-wide notices
     if cond.fire_rating and cond.fire_rating != "MODERATE":
@@ -421,8 +420,13 @@ def render(*, now, poster_day, is_tomorrow, forecast, photo, cfg, cond=None):
     canvas = new_canvas((W, H), WHITE)
     warning = getattr(cond, "warning", None) if cond else None
     if warning:
-        draw_warning_map(canvas, warning)
-    else:
+        try:
+            draw_warning_map(canvas, warning)
+        except Exception as e:  # a bad map must never take the poster down
+            print(f"warning map unusable ({e!r}); showing the photo", flush=True)
+            warning = None
+            cond.warning = None
+    if not warning:
         draw_photo(canvas, photo)
     draw_badges(canvas, cond)
     day_fc = forecast.day(poster_day) if forecast else None

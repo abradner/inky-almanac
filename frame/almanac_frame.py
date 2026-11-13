@@ -525,16 +525,38 @@ def _failed(state, e):
     return RETRY_MINUTES[min(n, len(RETRY_MINUTES) - 1)]
 
 
-def check_alert():
-    """The renderer's current alert id, or None if it couldn't be reached."""
+ALERT_MIN_GAP_S = 10 * 60  # at most one alert-driven redraw per 10 min (the first is immediate)
+
+
+def check_alert(state=None):
+    """The renderer's current alert id, or None if it couldn't be reached.
+    Guarded by the watchdog like a cycle: it runs hundreds of times a day."""
+    dog = _watchdog()
     try:
         connect_wifi()
         return get_json("/alert.json").get("id", "")
+    except MemoryError as e:
+        if uptime_ms() > FRESH_HEAP_MS:
+            restart_fresh(state if state is not None else {}, "out of memory checking alerts (%r)" % (e,))
+        return None
     except Exception as e:
         log("alert check failed:", repr(e))
         return None
     finally:
+        if dog:
+            dog.deinit()
         wifi_off()
+
+
+def alert_redraw_due(state, new):
+    """A changed alert redraws at once when a warning first appears; further
+    changes (reissues, moving storms, edge-of-radius flicker) at most every
+    ALERT_MIN_GAP_S, so the panel can't flash itself to death."""
+    if new is None or new == state.get("alert", ""):
+        return False
+    if not state.get("alert"):
+        return True
+    return time.time() - state.get("alert_drawn_at", 0) >= ALERT_MIN_GAP_S
 
 
 def rest(minutes, state=None):
@@ -561,14 +583,16 @@ def rest(minutes, state=None):
     # (~12.4 days of uptime).
     deadline = time.ticks_add(time.ticks_ms(), minutes * 60000)
     was = {"a": True, "b": True}  # a press already held at entry doesn't count
-    poll = (state or {}).get("alert_poll") or 0
+    # No alert polling while cycles are failing: the retry backoff stands.
+    poll = 0 if (state or {}).get("fail_count") else ((state or {}).get("alert_poll") or 0)
     next_poll = time.ticks_add(time.ticks_ms(), max(1, poll) * 60000)
     while time.ticks_diff(deadline, time.ticks_ms()) > 0:
         if poll and time.ticks_diff(time.ticks_ms(), next_poll) >= 0:
-            new = check_alert()
+            new = check_alert(state)
             next_poll = time.ticks_add(time.ticks_ms(), poll * 60000)
-            if new is not None and new != state.get("alert", ""):
+            if alert_redraw_due(state, new):
                 log("alert changed:", new or "(cleared)")
+                state["alert_drawn_at"] = time.time()
                 return "alert"
         for name, button in (("a", inky_frame.button_a), ("b", inky_frame.button_b)):
             down = button.raw()

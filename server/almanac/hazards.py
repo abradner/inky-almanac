@@ -284,13 +284,34 @@ def page_map(html):
         issued = " ".join(m.group(1).split())
         t = re.match(r"(\d{1,2}:\d{2} ?[ap]m)", issued)  # "5:13 pm Friday, 13 November 2026" -> "5:13 pm"
         issued = t.group(1) if t else issued
-    m = re.search(r'<img[^>]+src="data:image/png;base64,([A-Za-z0-9+/=\s]+)"', html)
-    if not m:
+    found = re.findall(r"""<img[^>]+src=["']data:image/png;base64,([A-Za-z0-9+/=\s]+)["']""", html)
+    if not found:
         return None, issued
-    data = base64.b64decode(re.sub(r"\s", "", m.group(1)))
-    if not data.startswith(b"\x89PNG"):
-        return None, issued
-    return data, issued
+    # The map is by far the largest embedded image (logos and icons are tiny).
+    data = base64.b64decode(re.sub(r"\s", "", max(found, key=len)))
+    return (data if valid_map_png(data) else None), issued
+
+
+MAX_MAP_PIXELS = 4_000_000  # BOM maps are ~700x750; refuse anything absurd
+
+
+def valid_map_png(data):
+    """A complete, sane PNG: checked before it is cached, so a truncated or
+    hostile image can never reach the renderer."""
+    import io
+
+    from PIL import Image
+
+    if not data or not data.startswith(b"\x89PNG"):
+        return False
+    try:
+        img = Image.open(io.BytesIO(data))
+        if img.width * img.height > MAX_MAP_PIXELS:
+            return False
+        img.verify()
+        return True
+    except Exception:
+        return False
 
 
 def check_rss(xml_text):
@@ -306,7 +327,8 @@ def check_geojson(data):
 def sort_and_dedupe(hazards):
     seen, out = set(), []
     for h in sorted(hazards, key=lambda h: h.rank):
-        key = (h.kind, h.level, h.where)
+        # BOM warnings share names ("Flood Warning" for two rivers): keep each.
+        key = h.ident if h.source == "BOM" and h.ident else (h.kind, h.level, h.where)
         if key not in seen:
             seen.add(key)
             out.append(h)

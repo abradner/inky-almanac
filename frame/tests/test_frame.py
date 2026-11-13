@@ -299,7 +299,7 @@ def test_rest_returns_when_the_alert_changes(frame, monkeypatch):
     _quiet_buttons(frame, monkeypatch)
     _clock(monkeypatch, 30000)  # each poll of the clock is 30 s
     answers = iter(["", "", "storm-1"])
-    monkeypatch.setattr(frame, "check_alert", lambda: next(answers))
+    monkeypatch.setattr(frame, "check_alert", lambda *a: next(answers))
     assert frame.rest(60, {"alert": "", "alert_poll": 2}) == "alert"
 
 
@@ -307,7 +307,7 @@ def test_rest_ignores_an_unchanged_alert_and_failed_checks(frame, monkeypatch):
     _quiet_buttons(frame, monkeypatch)
     _clock(monkeypatch, 30000)
     checks = []
-    monkeypatch.setattr(frame, "check_alert", lambda: checks.append(1) or (None if len(checks) % 2 else "storm-1"))
+    monkeypatch.setattr(frame, "check_alert", lambda *a: checks.append(1) or (None if len(checks) % 2 else "storm-1"))
     assert frame.rest(10, {"alert": "storm-1", "alert_poll": 2}) is None
     assert len(checks) >= 3
 
@@ -315,7 +315,7 @@ def test_rest_ignores_an_unchanged_alert_and_failed_checks(frame, monkeypatch):
 def test_rest_does_not_poll_when_the_server_says_not_to(frame, monkeypatch):
     _quiet_buttons(frame, monkeypatch)
     _clock(monkeypatch, 30000)
-    monkeypatch.setattr(frame, "check_alert", lambda: (_ for _ in ()).throw(AssertionError("polled")))
+    monkeypatch.setattr(frame, "check_alert", lambda *a: (_ for _ in ()).throw(AssertionError("polled")))
     assert frame.rest(5, {"alert": "", "alert_poll": 0}) is None
 
 
@@ -331,3 +331,31 @@ def test_check_alert_turns_wifi_off_and_survives_errors(frame, monkeypatch):
     assert frame.check_alert() is None
     wlan = __import__("network").WLAN()
     assert wlan.events[-1] == ("active", False)
+
+
+def test_alert_redraws_are_capped_except_the_first(frame, monkeypatch):
+    monkeypatch.setattr(__import__("time"), "time", lambda: 10_000)
+    assert frame.alert_redraw_due({"alert": ""}, "storm-1")  # first warning: at once
+    # ...even if the last one was cleared (and redrawn) only a minute ago
+    assert frame.alert_redraw_due({"alert": "", "alert_drawn_at": 10_000 - 60}, "storm-1")
+    recent = {"alert": "storm-1", "alert_drawn_at": 10_000 - 60}
+    assert not frame.alert_redraw_due(recent, "storm-2")  # a reissue a minute later: wait
+    old = {"alert": "storm-1", "alert_drawn_at": 10_000 - frame.ALERT_MIN_GAP_S}
+    assert frame.alert_redraw_due(old, "storm-2")
+    assert not frame.alert_redraw_due(old, None) and not frame.alert_redraw_due(old, "storm-1")
+
+
+def test_no_alert_polling_while_cycles_are_failing(frame, monkeypatch):
+    _quiet_buttons(frame, monkeypatch)
+    _clock(monkeypatch, 30000)
+    monkeypatch.setattr(frame, "check_alert", lambda *a: (_ for _ in ()).throw(AssertionError("polled")))
+    assert frame.rest(5, {"alert": "", "alert_poll": 2, "fail_count": 3}) is None
+
+
+def test_alert_check_is_watchdogged_and_restarts_on_oom(frame, monkeypatch):
+    monkeypatch.setattr(frame, "get_json", lambda p: {"id": "x"})
+    assert frame.check_alert({}) == "x"
+    assert frame.timers and frame.timers[-1].armed is False  # armed, then disarmed
+    monkeypatch.setattr(frame, "get_json", lambda p: (_ for _ in ()).throw(MemoryError("frag")))
+    monkeypatch.setattr(frame, "uptime_ms", lambda: frame.FRESH_HEAP_MS + 1)
+    assert frame.check_alert({}) is None and frame.resets == [1]

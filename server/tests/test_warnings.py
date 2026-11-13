@@ -150,3 +150,72 @@ def test_alert_endpoint_is_cheap_and_matches(tmp_path):
         assert json.load(urllib.request.urlopen(base + "/alert.json")) == {"id": hz.alert_id(hs)}
     finally:
         srv.shutdown()
+
+
+@pytest.mark.parametrize("rgb, ink", [
+    ((255, 242, 211), WHITE),  # land
+    ((255, 255, 255), WHITE),
+    ((219, 237, 255), BLUE),   # sea
+    ((255, 220, 0), 5),        # warning area -> yellow
+    ((250, 170, 30), 6),       # immediate threat -> orange
+    ((230, 50, 50), RED), ((210, 10, 10), RED), ((180, 0, 0), RED),
+    ((0, 0, 255), 0), ((7, 7, 254), 0),  # town labels -> black
+    ((51, 51, 51), 0), ((0, 0, 0), 0),   # region names, text
+    ((128, 128, 128), 2), ((127, 121, 105), 2), ((110, 119, 128), 2),  # boundaries -> green
+])
+def test_bom_map_colours_get_deliberate_inks(rgb, ink):
+    from almanac.dither import map_ink
+
+    assert map_ink(*rgb) == ink
+
+
+# ---- review fixes -------------------------------------------------------------
+
+
+def test_a_corrupt_map_is_never_cached_and_never_breaks_the_poster(tmp_path):
+    truncated = map_png()[:60]
+    assert hz.page_map(page(truncated))[0] is None
+    huge = Image.new("RGB", (3000, 2000), (255, 255, 255))
+    buf = io.BytesIO(); huge.save(buf, "PNG")
+    assert hz.page_map(page(buf.getvalue()))[0] is None  # over the pixel cap
+    # and if a bad map reaches render anyway, the photo is shown instead
+    w = {"png": b"\x89PNG not really", "title": "Severe Thunderstorm Warning", "issued": ""}
+    cond = conditions.Conditions(hazards=[], warning=w)
+    now = datetime(2026, 11, 13, 17, 20, tzinfo=SYD)
+    img = render(now=now, poster_day=now.date(), is_tomorrow=False, forecast=None,
+                 photo=photos.Photo("1", "P", "c", vivid()), cfg=cfg(tmp_path), cond=cond)
+    assert img.size == (800, 480) and cond.warning is None
+
+
+def test_the_largest_embedded_image_is_the_map():
+    tiny = Image.new("RGB", (4, 4), (0, 0, 255)); b = io.BytesIO(); tiny.save(b, "PNG")
+    html = (f"<img src='data:image/png;base64,{base64.b64encode(b.getvalue()).decode()}'>"
+            + page(map_png()))
+    assert hz.page_map(html)[0] == map_png()
+
+
+def test_map_cache_is_per_issue_so_an_old_track_never_shows(tmp_path):
+    c = cfg(tmp_path)
+    first = [hz.Hazard("storm", "watch", "Detailed Severe Thunderstorm Warning", None, "BOM", ident="BOM:17:13", url="http://x/IDN21035.shtml")]
+    conditions.load_warning_map(c, first, 1000, lambda u: page(map_png((255, 0, 0))))
+    reissue = [hz.Hazard("storm", "watch", "Detailed Severe Thunderstorm Warning", None, "BOM", ident="BOM:17:43", url="http://x/IDN21035.shtml")]
+
+    def down(url):
+        raise OSError("page fetch failed")
+
+    assert conditions.load_warning_map(c, reissue, 1100, down) is None  # not the 17:13 map
+
+
+def test_specific_hazards_beat_broad_badges_over_a_map():
+    hs = [hz.Hazard("fire", "watch", "Lane Cove", 6, "RFS", ident="f"),
+          hz.Hazard("storm", "watch", "Detailed Severe Thunderstorm Warning", None, "BOM", ident="s", url="u")]
+    cond = conditions.Conditions(hazards=hs, fire_ban=True,
+                                 warning={"png": b"", "title": "Detailed Severe Thunderstorm Warning", "issued": ""})
+    texts = [b[0] for b in badges_for(cond)]
+    assert texts[0] == "FIRE · WATCH AND ACT · Lane Cove 6 km"
+
+
+def test_two_flood_warnings_for_different_rivers_both_survive():
+    a = hz.Hazard("flood", "watch", "Flood Warning", None, "BOM", ident="BOM:13/10:00 Flood Warning for the Hawkesbury River")
+    b = hz.Hazard("flood", "watch", "Flood Warning", None, "BOM", ident="BOM:13/10:05 Flood Warning for the Nepean River")
+    assert len(hz.sort_and_dedupe([a, b])) == 2
