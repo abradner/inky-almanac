@@ -50,6 +50,28 @@ def _nearest_table(palette):
 _TABLES = {}
 
 
+def nearest(img, palette, out_palette, water_ink=None, land_ink=None):
+    """Map each pixel to its nearest ink, no diffusion: for flat-colour images
+    such as warning maps, where dithering would only blur text and borders."""
+    key = tuple(palette)
+    if key not in _TABLES:
+        _TABLES[key] = _nearest_table(palette)
+    table = _TABLES[key]
+    src = img.convert("RGB").tobytes()
+    out = bytearray(len(src) // 3)
+    for i in range(len(out)):
+        r, g, b = src[3 * i], src[3 * i + 1], src[3 * i + 2]
+        k = table[((r * 31 // 255) << 10) | ((g * 31 // 255) << 5) | (b * 31 // 255)]
+        if k == 1 and water_ink is not None and b > 200 and b - r > 20 and b - g > 5:
+            k = water_ink  # pale blue sea would become white, like the land
+        elif k == 1 and land_ink is not None and r > 215 and g > 205 and r - b > 8:
+            k = land_ink  # pale beige land
+        out[i] = k
+    result = Image.frombytes("P", img.size, bytes(out))
+    result.putpalette(out_palette)
+    return result
+
+
 def atkinson(img, palette, out_palette):
     """Dither an RGB image to indices into `palette` (list of RGB tuples).
 

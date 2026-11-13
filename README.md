@@ -118,6 +118,7 @@ poster.
 mise install                                   # Python, mpremote and pytest (see mise.toml)
 cp frame/config.py.example frame/config.py     # then set SERVER
 cp deploy.env.example deploy.env               # then set HOST, BIND, ...
+cp server.env.example server.env               # your location (ALMANAC_* settings)
 scripts/sign_ota.py --new-key ~/.config/inky-almanac/ota-key.txt   # once, for OTA
 ```
 
@@ -160,8 +161,8 @@ reset (`--reset`).
 
 ## Configuration
 
-Set these as environment variables on the container; the defaults live in
-`server/almanac/config.py`.
+Set these in `server.env` (gitignored; `deploy-server.sh` passes it to the
+container). The defaults live in `server/almanac/config.py`.
 
 | Variable | Default |
 |---|---|
@@ -257,6 +258,7 @@ None are in this repo. Your own values live in gitignored files, each with an
 |---|---|
 | `frame/config.py` | `MODE`, `SERVER` |
 | `deploy.env` | renderer host, published address, the frame's serial device, `OTA_KEY_FILE` |
+| `server.env` | your location and other `ALMANAC_*` settings for the renderer |
 | `WIFI_CONFIG.py` (on the board only) | `SSID`, `PSK`, `COUNTRY` (see `frame/WIFI_CONFIG.example.py`) |
 | `OTA_KEY.py` (on the board only) | the over-the-air signing key |
 

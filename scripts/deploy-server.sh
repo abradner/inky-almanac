@@ -31,6 +31,14 @@ else
   echo "no OTA key (OTA_KEY_FILE): deploying without an over-the-air release"
 fi
 rsync -a --delete --exclude __pycache__ "$here/server/" "$HOST:inky-almanac/server/"
+# Your location and other ALMANAC_* settings (server.env, gitignored).
+ENVFILE=""
+if [ -f "$here/server.env" ]; then
+  rsync -a "$here/server.env" "$HOST:inky-almanac/server.env"
+  ENVFILE="--env-file \$HOME/inky-almanac/server.env"
+else
+  echo "no server.env: the renderer uses the defaults in server/almanac/config.py"
+fi
 ssh $SSH_OPTS "$HOST" "bash -s" <<REMOTE
 set -euo pipefail
 cd ~/inky-almanac/server
@@ -40,7 +48,7 @@ docker rmi inky-almanac-test >/dev/null
 docker build -q -t inky-almanac:dev . >/dev/null
 docker rm -f inky-almanac >/dev/null 2>&1 || true
 docker run -d --name inky-almanac --restart unless-stopped -p $BIND:8077:8077 \
-  -v inky-almanac-cache:/var/cache/almanac --label project=inky-almanac $USB inky-almanac:dev >/dev/null
+  -v inky-almanac-cache:/var/cache/almanac --label project=inky-almanac $ENVFILE $USB inky-almanac:dev >/dev/null
 # The server warms every feed cache before it starts listening (up to ~1 min).
 for i in \$(seq 1 45); do curl -fsS -m 3 $BIND:8077/healthz 2>/dev/null && exit 0; sleep 2; done
 echo "renderer did not come up; docker logs inky-almanac" >&2; exit 1

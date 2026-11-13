@@ -43,6 +43,13 @@ class Hazard:
     where: str  # short place text
     km: float = None  # distance from home; 0 inside the area; None if unknown
     source: str = ""
+    # Specific hazards pinpoint a threat near home (a storm cell, a fire, a
+    # flooding river): they trigger an immediate refresh and may bring a map.
+    # Broad ones are notices for the whole region (flood watch, fire weather):
+    # badges at the hourly cadence.
+    specific: bool = True
+    ident: str = ""  # stable identity of this issue of the warning (alert id)
+    url: str = None  # the warning's page (BOM), for its map
 
     @property
     def rank(self):
@@ -151,7 +158,8 @@ def rfs_hazards(geojson, lat, lon, radius_km):
             km = distance_km(f.get("geometry"), lat, lon)
             if km is None or km > radius_km:
                 continue
-            out.append(Hazard("fire", level, _suburb(p.get("title")), round(km), "RFS"))
+            out.append(Hazard("fire", level, _suburb(p.get("title")), round(km), "RFS",
+                          ident="RFS:%s:%s" % (p.get("guid") or p.get("title"), p.get("category"))))
         except Exception as e:
             print(f"hazards: skipped an RFS feature ({e!r})")
     return out
@@ -215,7 +223,8 @@ def ses_hazards(alert_data, lat, lon, radius_km, skip_agencies=("NSWRFS",), now_
             if km is None or km > radius_km:
                 continue
             where = param.get("AffectedLocation") or " ".join((info.get("headline") or "").split()) or "Unnamed"
-            out.append(Hazard(_kind(info.get("event")), level, where.strip(), round(km), a.get("agencyCode") or "SES"))
+            out.append(Hazard(_kind(info.get("event")), level, where.strip(), round(km), a.get("agencyCode") or "SES",
+                              ident="SES:%s:%s" % (a.get("identifier"), level)))
         except Exception as e:
             print(f"hazards: skipped an SES alert ({e!r})")
     return out
@@ -224,14 +233,19 @@ def ses_hazards(alert_data, lat, lon, radius_km, skip_agencies=("NSWRFS",), now_
 # ------------------------------------------------------------------ BOM
 
 
+# BOM warnings that pinpoint a threat (and usually come with a map) as
+# opposed to region-wide notices.
+SPECIFIC_BOM = ("severe thunderstorm warning", "severe weather warning", "flood warning")
+
+
 def bom_hazards(rss_xml, areas, ignore):
     """BOM NSW warnings whose title names one of `areas` and none of `ignore`."""
     out = []
     root = ET.fromstring(rss_xml)
     for item in root.iter("item"):
-        title = " ".join((item.findtext("title") or "").split())
+        raw = " ".join((item.findtext("title") or "").split())
         # "10/04:40 EDT Severe Thunderstorm Warning for ..." -> drop the stamp
-        title = re.sub(r"^\d{1,2}/\d{2}:\d{2}\s+\w+\s+", "", title)
+        title = re.sub(r"^\d{1,2}/\d{2}:\d{2}\s+\w+\s+", "", raw)
         low = title.lower()
         if not any(a.lower() in low for a in areas) or any(i.lower() in low for i in ignore):
             continue
@@ -240,8 +254,43 @@ def bom_hazards(rss_xml, areas, ignore):
         name = re.split(r"\s+for\s+", title, maxsplit=1)[0]  # "Severe Thunderstorm Warning"
         kind = "flood" if "flood" in low else "storm" if "thunderstorm" in low else "weather"
         level = "advice" if "watch" in name.lower() or "minor" in name.lower() else "watch"
-        out.append(Hazard(kind, level, name, None, "BOM"))
+        specific = any(s in name.lower() for s in SPECIFIC_BOM) and "watch" not in name.lower()
+        link = (item.findtext("link") or "").strip() or None
+        # The raw title carries the issue time, so a reissue is a new alert.
+        out.append(Hazard(kind, level, name, None, "BOM", specific=specific, ident="BOM:" + raw,
+                          url=link))
     return out
+
+
+def alert_id(hazards):
+    """Identity of the specific hazards in force ("" if none). It changes when
+    one appears, is reissued, escalates or is cancelled."""
+    import hashlib
+
+    idents = sorted(h.ident or repr(h) for h in hazards if h.specific)
+    return hashlib.sha256("\n".join(idents).encode()).hexdigest()[:12] if idents else ""
+
+
+def page_map(html):
+    """(png bytes, issued text) from a BOM warning page, or (None, issued).
+
+    BOM's detailed warning pages embed their threat-area map as a base64 PNG
+    right in the page; there is no separate image URL to fetch."""
+    import base64
+
+    issued = None
+    m = re.search(r"Issued at ([^<]+?)\.\s*<", html)
+    if m:
+        issued = " ".join(m.group(1).split())
+        t = re.match(r"(\d{1,2}:\d{2} ?[ap]m)", issued)  # "5:13 pm Friday, 13 November 2026" -> "5:13 pm"
+        issued = t.group(1) if t else issued
+    m = re.search(r'<img[^>]+src="data:image/png;base64,([A-Za-z0-9+/=\s]+)"', html)
+    if not m:
+        return None, issued
+    data = base64.b64decode(re.sub(r"\s", "", m.group(1)))
+    if not data.startswith(b"\x89PNG"):
+        return None, issued
+    return data, issued
 
 
 def check_rss(xml_text):

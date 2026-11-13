@@ -474,6 +474,8 @@ def cycle(state, force=False, shuffle=False):
         state.pop("fail_since", None)
         state.pop("fail_count", None)
         state.pop("error_shown", None)
+        state["alert"] = info.get("alert", "")
+        state["alert_poll"] = int(info.get("alert_poll_minutes") or 0)
         if drew:
             ota_commit()  # this version just completed a refresh that drew
         try:
@@ -523,8 +525,22 @@ def _failed(state, e):
     return RETRY_MINUTES[min(n, len(RETRY_MINUTES) - 1)]
 
 
-def rest(minutes):
-    """Sleep `minutes`. Returns "a"/"b" if a button cut it short (USB power only)."""
+def check_alert():
+    """The renderer's current alert id, or None if it couldn't be reached."""
+    try:
+        connect_wifi()
+        return get_json("/alert.json").get("id", "")
+    except Exception as e:
+        log("alert check failed:", repr(e))
+        return None
+    finally:
+        wifi_off()
+
+
+def rest(minutes, state=None):
+    """Sleep `minutes`. Returns "a"/"b" if a button cut it short, or "alert"
+    if a new specific hazard warning appeared (USB power only: on battery the
+    board is off until the RTC alarm)."""
     try:
         # Arm the RTC alarm and drop the power latch. On battery this is the
         # last thing that happens until the alarm or a button wakes the board.
@@ -545,7 +561,15 @@ def rest(minutes):
     # (~12.4 days of uptime).
     deadline = time.ticks_add(time.ticks_ms(), minutes * 60000)
     was = {"a": True, "b": True}  # a press already held at entry doesn't count
+    poll = (state or {}).get("alert_poll") or 0
+    next_poll = time.ticks_add(time.ticks_ms(), max(1, poll) * 60000)
     while time.ticks_diff(deadline, time.ticks_ms()) > 0:
+        if poll and time.ticks_diff(time.ticks_ms(), next_poll) >= 0:
+            new = check_alert()
+            next_poll = time.ticks_add(time.ticks_ms(), poll * 60000)
+            if new is not None and new != state.get("alert", ""):
+                log("alert changed:", new or "(cleared)")
+                return "alert"
         for name, button in (("a", inky_frame.button_a), ("b", inky_frame.button_b)):
             down = button.raw()
             if down and not was[name]:
@@ -586,7 +610,9 @@ def main():
         except OSError as e:
             log("state save failed:", e)
         log("sleep", minutes, "min")
-        press = rest(minutes)
+        press = rest(minutes, state)
+        if press == "alert":
+            press = None  # a normal cycle: the poster changed, so it redraws
         force = press == "a"
 
 
