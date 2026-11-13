@@ -180,13 +180,15 @@ def test_badge_order_colours_and_cap():
         hz.Hazard("storm", "watch", "Severe Thunderstorm Warning", None, "BOM"),
     ]
     b = badges_for(conditions.Conditions(fire_ban=True, hazards=hz.sort_and_dedupe(hs)))
+    # specific hazards first, then broad notices such as the fire ban
     assert [x[0] for x in b] == [
         "FLOOD · EMERGENCY · Tempe",
-        "TOTAL FIRE BAN",
         "SEVERE THUNDERSTORM WARNING",
         "FIRE · ADVICE · Ku-Ring-Gai 6 km",
+        "TOTAL FIRE BAN",
     ]
-    assert b[0][1:] == (RED, WHITE) and b[2][1:] == (WHITE, RED) and b[3][1:] == (YELLOW, BLACK)
+    assert b[0][1:] == (RED, WHITE) and b[1][1:] == (WHITE, RED) and b[2][1:] == (YELLOW, BLACK)
+    assert b[3][1:] == (RED, WHITE) and b[3].small
 
     many = [hz.Hazard("fire", "advice", f"Place{i}", i, "RFS") for i in range(6)]
     capped = badges_for(conditions.Conditions(hazards=many, aqi=160))

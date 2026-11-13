@@ -12,7 +12,7 @@ from pathlib import Path
 from PIL import Image, ImageDraw, ImageEnhance, ImageFont
 
 from . import astro, conditions as cond_mod, icons, weather
-from .dither import atkinson
+from .dither import atkinson, map_inks
 from .palette import BLACK, BLUE, GREEN, INK_RGB, ORANGE, PNG_RGB, RED, WHITE, YELLOW, _flat, new_canvas, palette_image
 
 W, H = 800, 480
@@ -141,6 +141,19 @@ def draw_photo(canvas, photo):
         d.rectangle([box[0] - 3, box[1] - 3, box[2] + 2, box[3] + 2], outline=BLACK, width=2)
 
 
+def draw_warning_map(canvas, warning):
+    """A BOM warning's threat-area map in place of the photo: fitted whole
+    (it is a map, so no cropping), each of BOM's map colours given a fixed
+    ink (dither.map_ink), no dithering, so labels and borders stay crisp."""
+    import io
+
+    img = Image.open(io.BytesIO(warning["png"])).convert("RGB")
+    a = img.width / img.height
+    w, h = (PHOTO_W, int(PHOTO_W / a)) if a > PHOTO_W / H else (int(H * a), H)
+    img = img.resize((w, h), Image.LANCZOS)
+    canvas.paste(map_inks(img, _flat(PNG_RGB)), ((PHOTO_W - w) // 2, (H - h) // 2))
+
+
 def _placeholder_photo(d):
     """Concentric sunrise bands, for when no photo could be fetched."""
     bands = [BLUE, GREEN, YELLOW, ORANGE, RED]
@@ -153,7 +166,7 @@ def _placeholder_photo(d):
 # ---------------------------------------------------------------- side panel
 
 
-def draw_side(canvas, day_fc, *, now, poster_day, is_tomorrow, forecast, photo, cfg):
+def draw_side(canvas, day_fc, *, now, poster_day, is_tomorrow, forecast, photo, cfg, warning=None):
     d = ImageDraw.Draw(canvas)
     x = SIDE_X
     y = 14
@@ -176,7 +189,7 @@ def draw_side(canvas, day_fc, *, now, poster_day, is_tomorrow, forecast, photo, 
         y = _hourly_chart(d, day_fc, x, y, now=None if is_tomorrow else now)
         y = _sun_moon(d, day_fc, x, y, now=now, poster_day=poster_day, cfg=cfg)
 
-    _caption(d, photo, x, now=now, forecast=forecast, cfg=cfg, poster_day=poster_day)
+    _caption(d, photo, x, now=now, forecast=forecast, cfg=cfg, poster_day=poster_day, warning=warning)
 
 
 def _weather_block(d, fc, x, y):
@@ -280,11 +293,15 @@ def _sun_moon(d, fc, x, y, *, now, poster_day, cfg):
     return y + 26
 
 
-def _caption(d, photo, x, *, now, forecast, cfg, poster_day=None):
+def _caption(d, photo, x, *, now, forecast, cfg, poster_day=None, warning=None):
     y = H - 62
     d.line([(x, y), (x + SIDE_W, y)], fill=BLACK, width=1)
     y += 6
-    if photo is not None:
+    if warning:
+        d.text((x, y), fit_text(d, warning["title"], BOLD(14), SIDE_W), font=BOLD(14), fill=RED)
+        credit = ("Issued " + warning["issued"] + " · " if warning.get("issued") else "") + "Map: Bureau of Meteorology"
+        d.text((x, y + 19), fit_text(d, credit, SANS(12), SIDE_W), font=SANS(12), fill=BLACK)
+    elif photo is not None:
         d.text((x, y), fit_text(d, photo.title, ITALIC(15), SIDE_W), font=ITALIC(15), fill=BLACK)
         d.text((x, y + 19), fit_text(d, photo.credit, SANS(12), SIDE_W), font=SANS(12), fill=BLACK)
     # No clock time here: it would change the picture (and force a 40 s
@@ -328,6 +345,18 @@ def hazard_text(h):
     return f"{h.kind.upper()} · {_AWS_WORDS[h.level]} · {where}"
 
 
+class Badge(tuple):
+    """(text, fill, ink); .small marks a region-wide notice, drawn smaller."""
+
+    small = False
+
+
+def _badge(text, fill, ink, small=False):
+    b = Badge((text, fill, ink))
+    b.small = small
+    return b
+
+
 def badges_for(cond):
     """[(text, fill, ink)] for the conditions worth showing, most urgent first.
 
@@ -338,27 +367,34 @@ def badges_for(cond):
     if cond is None:
         return out
     hazards = list(cond.hazards or [])
+    shown = cond.warning["title"] if getattr(cond, "warning", None) else None
     for h in [h for h in hazards if h.level == "emergency"]:
-        out.append((hazard_text(h), *_AWS["emergency"]))
-    if cond.fire_ban:
-        out.append(("TOTAL FIRE BAN", RED, WHITE))
-    for h in [h for h in hazards if h.level != "emergency"]:
+        out.append(_badge(hazard_text(h), *_AWS["emergency"]))
+    # Specific hazards before every broad notice, so a fire ban can never push
+    # a nearby fire out of the (short, over a map) list.
+    for h in [h for h in hazards if h.level != "emergency" and h.specific]:
         if h.source == "BOM":  # the warning system's colours don't apply to BOM warnings
-            out.append((hazard_text(h), WHITE, RED))
+            if h.where != shown:  # the map and caption already say this one
+                out.append(_badge(hazard_text(h), WHITE, RED))
         else:
-            out.append((hazard_text(h), *_AWS[h.level]))
+            out.append(_badge(hazard_text(h), *_AWS[h.level]))
     if cond.unavailable:  # say so, rather than look like a quiet day
-        out.append(("NO LIVE HAZARD DATA: " + ", ".join(cond.unavailable), WHITE, BLACK))
+        out.append(_badge("NO LIVE HAZARD DATA: " + ", ".join(cond.unavailable), WHITE, BLACK, small=True))
+    if cond.fire_ban:
+        out.append(_badge("TOTAL FIRE BAN", RED, WHITE, small=True))
+    for h in [h for h in hazards if h.level != "emergency" and not h.specific]:
+        out.append(_badge(hazard_text(h), WHITE, BLACK, small=True))  # region-wide notices
     if cond.fire_rating and cond.fire_rating != "MODERATE":
         fill, ink = _FIRE[cond.fire_rating]
-        out.append((f"FIRE DANGER  {cond.fire_rating}", fill, ink))
+        out.append(_badge(f"FIRE DANGER  {cond.fire_rating}", fill, ink, small=True))
     if cond.aqi is not None:
         fill = RED if cond.aqi >= 151 else ORANGE
         # Category only: the exact number drifts every fetch and would force refreshes.
-        out.append((f"AIR QUALITY {cond_mod.aqi_label(cond.aqi).upper()}", fill, WHITE if fill == RED else BLACK))
-    if len(out) > MAX_BADGES:
-        extra = len(out) - (MAX_BADGES - 1)
-        out = out[: MAX_BADGES - 1] + [(f"+{extra} MORE · HAZARDS NEAR ME", WHITE, BLACK)]
+        out.append(_badge(f"AIR QUALITY {cond_mod.aqi_label(cond.aqi).upper()}", fill, WHITE if fill == RED else BLACK, small=True))
+    cap = 2 if shown else MAX_BADGES  # over a map, keep most of it visible
+    if len(out) > cap:
+        extra = len(out) - (cap - 1)
+        out = out[: cap - 1] + [_badge(f"+{extra} MORE · HAZARDS NEAR ME", WHITE, BLACK, small=True)]
     return out
 
 
@@ -366,21 +402,34 @@ def draw_badges(canvas, cond, x=12, y=12):
     """Pills over the photo's top-left corner, with a white halo so they read
     against any dithered background."""
     d = ImageDraw.Draw(canvas)
-    f = BOLD(15)
-    for text, fill, ink in badges_for(cond):
+    if getattr(cond, "warning", None):
+        y = H - 12 - 2 * 34  # over a map, sit at the bottom-left, clear of its title
+    for badge in badges_for(cond):
+        text, fill, ink = badge
+        f = BOLD(12) if badge.small else BOLD(15)
+        h = 22 if badge.small else 28
         text = fit_text(d, text, f, PHOTO_W - 2 * x - 22)
-        w = int(d.textlength(text, font=f)) + 22
-        h = 28
-        d.rounded_rectangle([x - 3, y - 3, x + w + 3, y + h + 3], radius=16, fill=WHITE)
-        d.rounded_rectangle([x, y, x + w, y + h], radius=14, fill=fill, outline=BLACK, width=2)
-        d.text((x + 11, y + 5), text, font=f, fill=ink)
-        y += h + 10
+        w = int(d.textlength(text, font=f)) + 18
+        d.rounded_rectangle([x - 3, y - 3, x + w + 3, y + h + 3], radius=h // 2 + 2, fill=WHITE)
+        d.rounded_rectangle([x, y, x + w, y + h], radius=h // 2, fill=fill, outline=BLACK, width=2)
+        d.text((x + 9, y + (3 if badge.small else 5)), text, font=f, fill=ink)
+        y += h + (6 if badge.small else 10)
 
 
 def render(*, now, poster_day, is_tomorrow, forecast, photo, cfg, cond=None):
     canvas = new_canvas((W, H), WHITE)
-    draw_photo(canvas, photo)
+    warning = getattr(cond, "warning", None) if cond else None
+    if warning:
+        try:
+            draw_warning_map(canvas, warning)
+        except Exception as e:  # a bad map must never take the poster down
+            print(f"warning map unusable ({e!r}); showing the photo", flush=True)
+            warning = None
+            cond.warning = None
+    if not warning:
+        draw_photo(canvas, photo)
     draw_badges(canvas, cond)
     day_fc = forecast.day(poster_day) if forecast else None
-    draw_side(canvas, day_fc, now=now, poster_day=poster_day, is_tomorrow=is_tomorrow, forecast=forecast, photo=photo, cfg=cfg)
+    draw_side(canvas, day_fc, now=now, poster_day=poster_day, is_tomorrow=is_tomorrow, forecast=forecast, photo=photo, cfg=cfg,
+              warning=warning)
     return canvas

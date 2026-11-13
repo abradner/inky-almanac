@@ -14,5 +14,6 @@ OTA_KEY.py
 # Your own values (see the .example files).
 frame/config.py
 deploy.env
+server.env
 *.key
 ota-key.txt

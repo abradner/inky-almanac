@@ -474,6 +474,8 @@ def cycle(state, force=False, shuffle=False):
         state.pop("fail_since", None)
         state.pop("fail_count", None)
         state.pop("error_shown", None)
+        state["alert"] = info.get("alert", "")
+        state["alert_poll"] = int(info.get("alert_poll_minutes") or 0)
         if drew:
             ota_commit()  # this version just completed a refresh that drew
         try:
@@ -523,8 +525,44 @@ def _failed(state, e):
     return RETRY_MINUTES[min(n, len(RETRY_MINUTES) - 1)]
 
 
-def rest(minutes):
-    """Sleep `minutes`. Returns "a"/"b" if a button cut it short (USB power only)."""
+ALERT_MIN_GAP_S = 10 * 60  # at most one alert-driven redraw per 10 min (the first is immediate)
+
+
+def check_alert(state=None):
+    """The renderer's current alert id, or None if it couldn't be reached.
+    Guarded by the watchdog like a cycle: it runs hundreds of times a day."""
+    dog = _watchdog()
+    try:
+        connect_wifi()
+        return get_json("/alert.json").get("id", "")
+    except MemoryError as e:
+        if uptime_ms() > FRESH_HEAP_MS:
+            restart_fresh(state if state is not None else {}, "out of memory checking alerts (%r)" % (e,))
+        return None
+    except Exception as e:
+        log("alert check failed:", repr(e))
+        return None
+    finally:
+        if dog:
+            dog.deinit()
+        wifi_off()
+
+
+def alert_redraw_due(state, new):
+    """A changed alert redraws at once when a warning first appears; further
+    changes (reissues, moving storms, edge-of-radius flicker) at most every
+    ALERT_MIN_GAP_S, so the panel can't flash itself to death."""
+    if new is None or new == state.get("alert", ""):
+        return False
+    if not state.get("alert"):
+        return True
+    return time.time() - state.get("alert_drawn_at", 0) >= ALERT_MIN_GAP_S
+
+
+def rest(minutes, state=None):
+    """Sleep `minutes`. Returns "a"/"b" if a button cut it short, or "alert"
+    if a new specific hazard warning appeared (USB power only: on battery the
+    board is off until the RTC alarm)."""
     try:
         # Arm the RTC alarm and drop the power latch. On battery this is the
         # last thing that happens until the alarm or a button wakes the board.
@@ -545,7 +583,17 @@ def rest(minutes):
     # (~12.4 days of uptime).
     deadline = time.ticks_add(time.ticks_ms(), minutes * 60000)
     was = {"a": True, "b": True}  # a press already held at entry doesn't count
+    # No alert polling while cycles are failing: the retry backoff stands.
+    poll = 0 if (state or {}).get("fail_count") else ((state or {}).get("alert_poll") or 0)
+    next_poll = time.ticks_add(time.ticks_ms(), max(1, poll) * 60000)
     while time.ticks_diff(deadline, time.ticks_ms()) > 0:
+        if poll and time.ticks_diff(time.ticks_ms(), next_poll) >= 0:
+            new = check_alert(state)
+            next_poll = time.ticks_add(time.ticks_ms(), poll * 60000)
+            if alert_redraw_due(state, new):
+                log("alert changed:", new or "(cleared)")
+                state["alert_drawn_at"] = time.time()
+                return "alert"
         for name, button in (("a", inky_frame.button_a), ("b", inky_frame.button_b)):
             down = button.raw()
             if down and not was[name]:
@@ -586,7 +634,9 @@ def main():
         except OSError as e:
             log("state save failed:", e)
         log("sleep", minutes, "min")
-        press = rest(minutes)
+        press = rest(minutes, state)
+        if press == "alert":
+            press = None  # a normal cycle: the poster changed, so it redraws
         force = press == "a"
 
 

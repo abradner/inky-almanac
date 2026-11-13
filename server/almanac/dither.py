@@ -50,6 +50,63 @@ def _nearest_table(palette):
 _TABLES = {}
 
 
+def map_ink(r, g, b):
+    """Ink for one pixel of a BOM warning map.
+
+    BOM draws these maps from a small palette, so each colour gets a fixed,
+    deliberate ink rather than its nearest match:
+      land (255,242,211) and white boxes   -> white
+      sea (219,237,255)                    -> blue
+      warning area (255,220,0)             -> yellow
+      immediate threat (250,170,30)        -> orange
+      severe cells (230,50,50), (210,10,10)-> red
+      town labels and dots (0,0,255)       -> black
+      region names (51,51,51), black text  -> black
+      boundary lines (128,128,128) and the
+      anti-aliased greys around them       -> green
+    """
+    from colorsys import rgb_to_hsv
+
+    h, s, v = rgb_to_hsv(r / 255, g / 255, b / 255)
+    h *= 360
+    if s >= 0.45 and v >= 0.35:  # saturated: the warning colours and labels
+        if 190 <= h <= 270:
+            return 0  # blue labels -> black
+        if h < 20 or h >= 330:
+            return 4  # red
+        if h < 45:
+            return 6  # orange
+        if h < 75:
+            return 5  # yellow
+        if h < 170:
+            return 2  # green
+        return 0
+    if v < 0.45:
+        return 0  # black and dark grey text (also once downscaling has greyed it)
+    if 180 <= h <= 260 and s >= 0.08 and v >= 0.9:
+        return 3  # pale blue sea -> blue
+    if v >= 0.86:
+        return 1  # land, white
+    return 2  # greys: boundaries -> green
+
+
+_MAP_TABLE = None
+
+
+def map_inks(img, out_palette):
+    """A BOM warning map as panel inks (see map_ink), no dithering."""
+    global _MAP_TABLE
+    if _MAP_TABLE is None:
+        _MAP_TABLE = bytes(map_ink(r5 * 255 // 31, g5 * 255 // 31, b5 * 255 // 31)
+                           for r5 in range(32) for g5 in range(32) for b5 in range(32))
+    src = img.convert("RGB").tobytes()
+    out = bytes(_MAP_TABLE[((src[i] >> 3) << 10) | ((src[i + 1] >> 3) << 5) | (src[i + 2] >> 3)]
+                for i in range(0, len(src), 3))
+    result = Image.frombytes("P", img.size, out)
+    result.putpalette(out_palette)
+    return result
+
+
 def atkinson(img, palette, out_palette):
     """Dither an RGB image to indices into `palette` (list of RGB tuples).
 

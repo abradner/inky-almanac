@@ -12,6 +12,7 @@ so data older than STALE_AFTER is ignored rather than shown.
 """
 
 import json
+import threading
 import time
 import urllib.parse
 import urllib.request
@@ -38,6 +39,8 @@ class Conditions:
     aqi: int = None  # worst daytime US AQI, only if >= AQI_SHOW_FROM
     hazards: list = field(default_factory=list)  # hazards.Hazard, most urgent first
     unavailable: list = field(default_factory=list)  # hazard sources with no usable data
+    alert: str = ""  # identity of the specific hazards in force (hazards.alert_id)
+    warning: dict = None  # {"png": bytes, "title": str, "issued": str} for a warning with a map
 
 
 # ------------------------------------------------------------------ parsing
@@ -90,22 +93,27 @@ def _cached(cfg, name, fetch, now, ttl=TTL, check=None, stale_after=STALE_AFTER)
         data = fetch()
         if check:
             check(data)
-        tmp = path.with_suffix(".tmp")
+        tmp = path.with_suffix(".%d.tmp" % threading.get_ident())  # two refresher threads
         tmp.write_text(json.dumps({"fetched_at": now, "data": data}))
         tmp.replace(path)
         return data, now
     except Exception as e:
-        print(f"conditions: {name} fetch failed ({e!r})")
+        if not isinstance(e, CacheOnly):
+            print(f"conditions: {name} fetch failed ({e!r})")
         if cached and now - cached["fetched_at"] < stale_after:
             return cached["data"], cached["fetched_at"]
         return None, None
+
+
+class CacheOnly(OSError):
+    pass
 
 
 def offline(url):
     """get_text for the request path: never touch the network, use the cache
     the background refresher keeps warm (a slow feed must not make the
     frame's 60 s poll time out)."""
-    raise OSError("request path is cache-only")
+    raise CacheOnly("request path is cache-only")
 
 
 def _get_text(url, ua):
@@ -162,6 +170,8 @@ def load(cfg, day, tomorrow, now=None, get_text=None, from_hour=None):
         }
     )
     c.hazards, c.unavailable = load_hazards(cfg, now, get_text)
+    c.alert = hz.alert_id(c.hazards)
+    c.warning = load_warning_map(cfg, c.hazards, now, get_text)
 
     aq, _ = _cached(cfg, "air.json", lambda: json.loads(get_text(AQ_API + "?" + q)), now, ttl=60 * 60, check=_check_aq)
     if aq:
@@ -172,7 +182,8 @@ def load(cfg, day, tomorrow, now=None, get_text=None, from_hour=None):
     return c
 
 
-HAZARD_TTL = 10 * 60
+MAP_STALE_AFTER = 10 * 60  # a storm map older than this is history, not a forecast
+HAZARD_TTL = 90  # refreshed every 2 min in the background; requests read the cache
 HAZARD_STALE_AFTER = 90 * 60  # an old "Advice" may have become an Emergency, or been cleared
 
 
@@ -205,6 +216,32 @@ def load_hazards(cfg, now, get_text):
             print(f"conditions: {name} hazards unusable ({e!r})")
             missing.append(name)
     return hz.sort_and_dedupe(found), missing
+
+
+def load_warning_map(cfg, hazards, now, get_text):
+    """The map of the most specific BOM warning in force, if its page has one.
+
+    The detailed severe thunderstorm warning (IDN21035) is preferred: its map
+    shows the storm cells and their 30-minute track."""
+    import base64
+    import hashlib
+
+    candidates = [h for h in hazards if h.source == "BOM" and h.specific and h.url]
+    candidates.sort(key=lambda h: (0 if "IDN21035" in h.url else 1, h.rank))
+    for h in candidates:
+        # Keyed by this issue of the warning, not just its page: BOM reuses
+        # product pages (IDN21035) across events, and an old storm track
+        # must never sit under a new warning.
+        key = hashlib.sha256((h.url + "|" + h.ident).encode()).hexdigest()[:12]
+
+        def fetch(url=h.url):
+            png, issued = hz.page_map(get_text(url))
+            return {"png": base64.b64encode(png).decode() if png else None, "issued": issued}
+
+        data, _ = _cached(cfg, f"warnmap-{key}.json", fetch, now, ttl=HAZARD_TTL, stale_after=MAP_STALE_AFTER)
+        if data and data.get("png"):
+            return {"png": base64.b64decode(data["png"]), "title": h.where, "issued": data.get("issued") or ""}
+    return None
 
 
 def load_bom_days(cfg, now=None, get_text=None):

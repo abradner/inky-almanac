@@ -29,6 +29,10 @@ from .palette import to_preview
 from .render import render
 
 
+ALERT_POLL_MINUTES = 2  # how often a USB-powered frame asks /alert.json
+ALERT_REFRESH_S = 90  # how often the renderer re-reads the hazard feeds
+
+
 class Almanac:
     def __init__(self, cfg, *, weather_loader=None, photo_loader=None, conditions_loader=None, bom_loader=None):
         self.cfg = cfg
@@ -94,7 +98,10 @@ class Almanac:
         """Render (or reuse this hour's render of) the poster for `now`."""
         day, is_tomorrow = schedule.poster_day(now, self.cfg.tomorrow_from_hour)
         shuffle = self.shuffle_count(day)
-        key = (schedule.slot(now), day, shuffle)
+        cond = self.conditions(day, is_tomorrow, now)
+        # The alert is part of the key: a warning issued mid-hour must make a
+        # new poster now, not at the next slot.
+        key = (schedule.slot(now), day, shuffle, cond.alert if cond else "")
         with self._lock:
             hit = self._cache.get(key)
             if hit:
@@ -108,11 +115,6 @@ class Almanac:
                 except Exception as e:
                     print(f"BOM overlay failed: {e!r}", flush=True)
             photo = self._photo(day, shuffle)
-            try:  # badges are optional; never let them take the poster down
-                cond = self._conditions(day, is_tomorrow, None if is_tomorrow else now.hour)
-            except Exception as e:
-                print(f"conditions failed: {e!r}", flush=True)
-                cond = None
             canvas = render(now=now, poster_day=day, is_tomorrow=is_tomorrow, forecast=forecast, photo=photo, cfg=self.cfg, cond=cond)
             buf = io.BytesIO()
             canvas.save(buf, "PNG", bits=4, optimize=True)
@@ -123,6 +125,7 @@ class Almanac:
                 "hash": hashlib.sha256(png).hexdigest()[:16],
                 "photo": None if photo is None else f"{photo.title} ({photo.credit})",
                 "conditions": cond,
+                "alert": cond.alert if cond else "",
                 "day": day.isoformat(),
                 "tomorrow": is_tomorrow,
                 "rendered_at": time.time(),
@@ -133,6 +136,19 @@ class Almanac:
             while len(self._cache) > 6:
                 self._cache.pop(next(iter(self._cache)))
             return entry
+
+    def conditions(self, day, is_tomorrow, now):
+        try:  # badges are optional; never let them take the poster down
+            return self._conditions(day, is_tomorrow, None if is_tomorrow else now.hour)
+        except Exception as e:
+            print(f"conditions failed: {e!r}", flush=True)
+            return None
+
+    def alert(self, now):
+        """The current alert id: cheap, cache-only (what the frame polls)."""
+        day, is_tomorrow = schedule.poster_day(now, self.cfg.tomorrow_from_hour)
+        cond = self.conditions(day, is_tomorrow, now)
+        return cond.alert if cond else ""
 
     def by_hash(self, digest):
         # No lock: a render in progress can hold it for a while, and list() of
@@ -160,6 +176,8 @@ class Almanac:
             "day": p["day"],
             "tomorrow": p["tomorrow"],
             "photo": p["photo"],
+            "alert": p["alert"],
+            "alert_poll_minutes": ALERT_POLL_MINUTES,
             "server_time": now.isoformat(timespec="seconds"),
         }
         code = self.ota_manifest()
@@ -220,6 +238,8 @@ def make_handler(app):
                     except OSError:
                         return self._json({"error": "no release"}, HTTPStatus.NOT_FOUND)
                     return self._send(HTTPStatus.OK, body, "text/x-python")
+                if url.path == "/alert.json":
+                    return self._json({"id": app.alert(now)})
                 if url.path == "/healthz":
                     return self._send(HTTPStatus.OK, b"ok\n", "text/plain")
                 if url.path == "/":
@@ -294,6 +314,21 @@ def main():
         while True:
             time.sleep(5 * 60)
             refresh_feeds()
+
+    def keep_warnings_fresh():
+        """Hazards and warning maps every ALERT_REFRESH_S: the frame checks
+        /alert.json every couple of minutes, so this sets how fast a new
+        warning reaches the wall."""
+        while True:
+            time.sleep(ALERT_REFRESH_S)
+            now = app.now()
+            day, tomorrow = schedule.poster_day(now, cfg.tomorrow_from_hour)
+            try:
+                conditions.load(cfg, day, tomorrow)
+            except Exception as e:
+                print(f"warning refresh failed: {e!r}", flush=True)
+
+    threading.Thread(target=keep_warnings_fresh, name="warnings", daemon=True).start()
 
     refresh_feeds()  # warm the caches before the first request
     threading.Thread(target=keep_feeds_fresh, name="feeds", daemon=True).start()
