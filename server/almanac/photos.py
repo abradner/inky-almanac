@@ -99,7 +99,19 @@ def nice_title(file_title, object_name=""):
     # Camera-roll style names ("IMG 1234", "DSC01234") say nothing.
     if re.fullmatch(r"(IMG|DSC|DSCF|P)[ _-]?\d+.*", name, flags=re.I):
         return "Untitled"
-    return " ".join(name.split())
+    return tidy_title(name)
+
+
+def tidy_title(name):
+    """Drop Commons catalogue junk: "Annapurna South, Himal-3794" -> "Annapurna
+    South, Himal"; "Munnar Waterfalls-WUS07067" -> "Munnar Waterfalls";
+    "Dülmen, Umland -- 2014 -- 7056" -> "Dülmen, Umland"."""
+    name = " ".join(name.split())
+    name = re.sub(r"\s*--\s*", ", ", name)
+    for _ in range(2):  # a trailing id, then perhaps another
+        name = re.sub(r"(?:[\s_,]+|-)(?:[A-Z]{0,5}\d{3,}[A-Za-z]?|\(\d+\))$", "", name)
+    name = re.sub(r"(,\s*(?:19|20)\d{2}),\s*\d+$", r"\1", name)
+    return name.strip(" ,-_") or "Untitled"
 
 
 def usable(info):

@@ -50,6 +50,7 @@ class Hazard:
     specific: bool = True
     ident: str = ""  # stable identity of this issue of the warning (alert id)
     url: str = None  # the warning's page (BOM), for its map
+    detail: str = ""  # BOM: the area named after "for" ("Blue Mountains/Hawkesbury and Sydney")
 
     @property
     def rank(self):
@@ -251,14 +252,16 @@ def bom_hazards(rss_xml, areas, ignore):
             continue
         if low.startswith(("final", "cancellation")):
             continue
-        name = re.split(r"\s+for\s+", title, maxsplit=1)[0]  # "Severe Thunderstorm Warning"
+        parts = re.split(r"\s+for\s+", title, maxsplit=1)  # "Severe Thunderstorm Warning" | area
+        name = parts[0].strip()
+        area = re.sub(r"^(people in |the )", "", parts[1].strip()) if len(parts) > 1 else ""
         kind = "flood" if "flood" in low else "storm" if "thunderstorm" in low else "weather"
         level = "advice" if "watch" in name.lower() or "minor" in name.lower() else "watch"
         specific = any(s in name.lower() for s in SPECIFIC_BOM) and "watch" not in name.lower()
         link = (item.findtext("link") or "").strip() or None
         # The raw title carries the issue time, so a reissue is a new alert.
         out.append(Hazard(kind, level, name, None, "BOM", specific=specific, ident="BOM:" + raw,
-                          url=link))
+                          url=link, detail=area))
     return out
 
 
