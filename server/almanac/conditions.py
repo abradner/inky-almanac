@@ -240,7 +240,8 @@ def load_warning_map(cfg, hazards, now, get_text):
 
         data, _ = _cached(cfg, f"warnmap-{key}.json", fetch, now, ttl=HAZARD_TTL, stale_after=MAP_STALE_AFTER)
         if data and data.get("png"):
-            return {"png": base64.b64decode(data["png"]), "title": h.where, "issued": data.get("issued") or ""}
+            return {"png": base64.b64decode(data["png"]), "title": h.where, "area": h.detail,
+                    "issued": data.get("issued") or ""}
     return None
 
 

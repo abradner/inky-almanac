@@ -69,6 +69,11 @@ class Hour:
     temp: float
     rain_prob: int
     code: int
+    # For the next-hour line (older cached payloads may lack these).
+    rain_mm: float = 0.0  # precipitation over the preceding hour
+    wind: float = 0.0  # km/h
+    gust: float = 0.0  # km/h
+    uv: float = 0.0
 
 
 @dataclass
@@ -112,6 +117,11 @@ def _num(v, default=0.0):
     return default if v is None else v
 
 
+def _at(block, key, i):
+    v = block.get(key)
+    return v[i] if v and i < len(v) else None
+
+
 def parse(payload, fetched_at):
     daily = payload["daily"]
     hourly = payload["hourly"]
@@ -124,6 +134,10 @@ def parse(payload, fetched_at):
                 temp=_num(hourly["temperature_2m"][i]),
                 rain_prob=int(_num(hourly["precipitation_probability"][i], 0)),
                 code=int(_num(hourly["weather_code"][i], 3)),
+                rain_mm=_num(_at(hourly, "precipitation", i)),
+                wind=_num(_at(hourly, "wind_speed_10m", i)),
+                gust=_num(_at(hourly, "wind_gusts_10m", i)),
+                uv=_num(_at(hourly, "uv_index", i)),
             )
         )
     days = {}
@@ -152,7 +166,7 @@ def _url(cfg):
         "timezone": cfg.timezone,
         "forecast_days": 4,
         "current": "temperature_2m,weather_code",
-        "hourly": "temperature_2m,precipitation_probability,weather_code",
+        "hourly": "temperature_2m,precipitation_probability,weather_code,precipitation,wind_speed_10m,wind_gusts_10m,uv_index",
         "daily": ",".join(
             [
                 "weather_code",

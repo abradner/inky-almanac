@@ -219,3 +219,84 @@ def test_two_flood_warnings_for_different_rivers_both_survive():
     a = hz.Hazard("flood", "watch", "Flood Warning", None, "BOM", ident="BOM:13/10:00 Flood Warning for the Hawkesbury River")
     b = hz.Hazard("flood", "watch", "Flood Warning", None, "BOM", ident="BOM:13/10:05 Flood Warning for the Nepean River")
     assert len(hz.sort_and_dedupe([a, b])) == 2
+
+
+# ---- layout: condensed side panel, next-hour line, map mode ---------------------
+
+
+def H(**kw):
+    base = dict(hour=17, temp=21.4, rain_prob=10, code=1, rain_mm=0.0, wind=10.0, gust=15.0, uv=2.0)
+    base.update(kw)
+    return weather.Hour(**base)
+
+
+def test_next_hour_items_lead_with_what_matters():
+    from almanac.render import next_hour_items
+
+    texts = lambda h: [t for t, _ in next_hour_items(h)]
+    assert texts(H()) == ["Mostly sunny", "21°"]  # nothing notable: conditions + temperature
+    assert texts(H(code=96, rain_mm=4.2, gust=60, wind=30)) == ["Hail", "Rain 4 mm", "Windy 30/60 km/h"]
+    assert texts(H(rain_prob=70)) == ["Rain likely 70%", "21°"]
+    assert texts(H(rain_mm=0.6, uv=8)) == ["Rain 0.6 mm", "UV 8", "21°"]
+    assert len(next_hour_items(H(code=95, rain_mm=9, gust=80, uv=11))) == 3  # never more than 3
+
+
+def test_hour_labels():
+    from almanac.render import _hour_label
+
+    assert _hour_label(17) == "5–6pm"
+    assert _hour_label(11) == "11am–12pm"
+    assert _hour_label(23) == "11pm–12am"
+    assert _hour_label(0) == "12–1am"
+
+
+def test_weather_parse_reads_the_new_hourly_fields_and_tolerates_old_caches():
+    from test_almanac import payload as p
+
+    old = p()
+    fc = weather.parse(old, 0)
+    h = fc.days[list(fc.days)[0]].hours[0]
+    assert h.rain_mm == 0.0 and h.gust == 0.0  # older cached payloads lack them
+    new = p()
+    n = len(new["hourly"]["time"])
+    new["hourly"].update(precipitation=[1.5] * n, wind_speed_10m=[20] * n, wind_gusts_10m=[45] * n, uv_index=[7] * n)
+    h = weather.parse(new, 0).days[list(fc.days)[0]].hours[3]
+    assert (h.rain_mm, h.wind, h.gust, h.uv) == (1.5, 20, 45, 7)
+
+
+def test_map_mode_widens_the_text_panel_and_lists_warnings(tmp_path):
+    import almanac.render as R
+
+    w = {"png": map_png(), "title": "Severe Thunderstorm Warning", "area": "Sydney Metropolitan", "issued": "5:38 pm"}
+    hs = [hz.Hazard("storm", "watch", w["title"], None, "BOM", ident="a", url="x", detail="Sydney Metropolitan"),
+          hz.Hazard("fire", "watch", "Lane Cove", 6, "RFS", ident="f")]
+    cond = conditions.Conditions(hazards=hs, alert="a", warning=w, fire_ban=True)
+    now = datetime(2026, 11, 13, 17, 41, tzinfo=SYD)
+    render(now=now, poster_day=now.date(), is_tomorrow=False, forecast=None,
+           photo=photos.Photo("1", "P", "c", vivid()), cfg=cfg(tmp_path), cond=cond)
+    assert R.SIDE_X < 500 + 16  # the map is narrower than a photo, the text panel wider
+    lines = [t for t, _ in R.warning_lines(cond, w)]
+    assert lines == ["• Fire watch and act: Lane Cove (6 km)", "Also: Total fire ban"]
+    render(now=now, poster_day=now.date(), is_tomorrow=False, forecast=None,
+           photo=photos.Photo("1", "P", "c", vivid()), cfg=cfg(tmp_path), cond=conditions.Conditions())
+    assert R.SIDE_X == 500 + 16  # a photo poster resets the layout
+
+
+def test_bom_area_is_carried_separately():
+    c = Config()
+    got = {h.where: h.detail for h in hz.bom_hazards(RSS, c.bom_warning_areas, c.bom_warning_ignore)}
+    assert got["Detailed Severe Thunderstorm Warning"] == "Blue Mountains/Hawkesbury and Sydney"
+    assert got["Severe Thunderstorm Warning"] == "Sydney Metropolitan"
+    people = RSS.replace("Warning for Sydney Metropolitan", "Warning for people in Sydney Metropolitan")
+    got = {h.where: h.detail for h in hz.bom_hazards(people, c.bom_warning_areas, c.bom_warning_ignore)}
+    assert got["Severe Thunderstorm Warning"] == "Sydney Metropolitan"
+
+
+@pytest.mark.parametrize("raw, tidy", [
+    ("Annapurna South, Himchuli, Machapuchare Himal-3794", "Annapurna South, Himchuli, Machapuchare Himal"),
+    ("Munnar-Pothupara Waterfalls-WUS07067", "Munnar-Pothupara Waterfalls"),
+    ("Dülmen, Umland -- 2014 -- 7056", "Dülmen, Umland"),
+    ("Lake Louise", "Lake Louise"),
+])
+def test_commons_titles_lose_their_catalogue_junk(raw, tidy):
+    assert photos.tidy_title(raw) == tidy

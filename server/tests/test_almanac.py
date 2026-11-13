@@ -195,7 +195,7 @@ def test_usable_rejects_panoramas_small_and_non_jpeg():
 
 
 def test_nice_title():
-    assert photos.nice_title("File:Moraine_Lake_17092005.jpg") == "Moraine Lake 17092005"
+    assert photos.nice_title("File:Moraine_Lake_17092005.jpg") == "Moraine Lake"  # catalogue number dropped
     assert photos.nice_title("File:x.jpg", "<i>Matterhorn</i> at dawn") == "Matterhorn at dawn"
     assert photos.nice_title("File:IMG_1234.JPG") == "Untitled"
 
@@ -506,7 +506,12 @@ def test_junk_from_open_meteo_never_replaces_a_good_cache(tmp_path):
     assert again.fetched_at == 1000 + weather.TTL_SECONDS + 2  # ...and the cache still parses
 
 
-def test_evening_posters_only_change_when_the_data_does(tmp_path):
+def test_evening_posters_only_change_when_the_data_does(tmp_path, monkeypatch):
+    # The next-hour line changes the poster every hour by design; everything
+    # else must stay put, or the panel redraws for nothing.
+    import almanac.render as R
+
+    monkeypatch.setattr(R, "_next_hour", lambda d, forecast, x, y, now: y)
     fresh = datetime(2026, 11, 10, 18, 50, tzinfo=SYD).timestamp()  # stale stamps change hourly, rightly
     app = Almanac(
         cfg(tmp_path),
@@ -653,7 +658,12 @@ def test_requests_never_crawl_when_a_stale_pool_exists(tmp_path):
     assert json.loads((tmp_path / "photo-pool.json").read_text())["pool"][0]["id"] == "2"
 
 
-def test_stale_stamp_does_not_change_hourly(tmp_path):
+def test_stale_stamp_does_not_change_hourly(tmp_path, monkeypatch):
+    # The next-hour line changes the poster every hour by design; everything
+    # else must stay put, or the panel redraws for nothing.
+    import almanac.render as R
+
+    monkeypatch.setattr(R, "_next_hour", lambda d, forecast, x, y, now: y)
     fetched = datetime(2026, 11, 10, 6, 0, tzinfo=SYD).timestamp()
     app = Almanac(
         cfg(tmp_path),
