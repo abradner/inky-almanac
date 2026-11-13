@@ -43,10 +43,10 @@ class Hazard:
     where: str  # short place text
     km: float = None  # distance from home; 0 inside the area; None if unknown
     source: str = ""
-    # Specific hazards pinpoint a threat near home (a storm cell, a fire, a
-    # flooding river): they trigger an immediate refresh and may bring a map.
-    # Broad ones are notices for the whole region (flood watch, fire weather):
-    # badges at the hourly cadence.
+    # Specific hazards pinpoint a threat near home that asks for action (a
+    # storm cell, a Watch and Act fire, a flooding river): they trigger an
+    # immediate refresh and may bring a map. Broad ones are notices (flood
+    # watch, fire weather, and RFS/SES "Advice"): badges at the hourly cadence.
     specific: bool = True
     ident: str = ""  # stable identity of this issue of the warning (alert id)
     url: str = None  # the warning's page (BOM), for its map
@@ -159,7 +159,7 @@ def rfs_hazards(geojson, lat, lon, radius_km):
             km = distance_km(f.get("geometry"), lat, lon)
             if km is None or km > radius_km:
                 continue
-            out.append(Hazard("fire", level, _suburb(p.get("title")), round(km), "RFS",
+            out.append(Hazard("fire", level, _suburb(p.get("title")), round(km), "RFS", specific=level != "advice",
                           ident="RFS:%s:%s" % (p.get("guid") or p.get("title"), p.get("category"))))
         except Exception as e:
             print(f"hazards: skipped an RFS feature ({e!r})")
@@ -225,6 +225,7 @@ def ses_hazards(alert_data, lat, lon, radius_km, skip_agencies=("NSWRFS",), now_
                 continue
             where = param.get("AffectedLocation") or " ".join((info.get("headline") or "").split()) or "Unnamed"
             out.append(Hazard(_kind(info.get("event")), level, where.strip(), round(km), a.get("agencyCode") or "SES",
+                              specific=level != "advice",
                               ident="SES:%s:%s" % (a.get("identifier"), level)))
         except Exception as e:
             print(f"hazards: skipped an SES alert ({e!r})")
@@ -282,6 +283,8 @@ def page_map(html):
     import base64
 
     issued = None
+    if re.search(r"\bcancel(?:lation|led)\b", re.sub(r"<[^>]+>", " ", html[:20000]), re.I):
+        return None, None  # a cancellation's map shows nothing current
     m = re.search(r"Issued at ([^<]+?)\.\s*<", html)
     if m:
         issued = " ".join(m.group(1).split())
