@@ -216,11 +216,14 @@ The photo categories are `CATEGORIES` in `photos.py`. The pool refreshes every
 - **No clock on the poster.** An hourly timestamp would force a full
   refresh every hour for nothing. Stale data is flagged instead.
 - **Evenings describe tomorrow.** Its photo and its forecast.
-- **An urgent coming hour refreshes like a warning.** When the top fact
-  scores 80 or more (hail, storms, very heavy rain, a violent wind change),
-  `/alert.json` carries it alongside the hazards, so the frame redraws within
-  minutes under the warning rules. It is held until the hour ends, so a
-  forecast wobbling across the line can't flash the panel.
+- **A remarkable coming hour is re-checked between refreshes.** The top
+  fact's score sets a tier: 90+ every 5 minutes, 75+ every 15, 50+ every
+  30, otherwise hourly. At each re-check `/alert.json` carries a short digest
+  of the facts the panel would show, so the frame redraws only when that
+  changes; between re-checks the last digest is held, so a fact that
+  vanishes mid-interval can't flash the panel. While a tier is active the
+  forecast is fetched as often as the tier re-checks. The frame allows at
+  most one such redraw per 10 minutes, so the 5-minute tier acts as 10.
 - **"Since 9am" is modelled.** It sums Open-Meteo's hourly precipitation, not
   a rain gauge.
 - **Hazard data goes stale after 90 minutes.** An old "Advice" may have

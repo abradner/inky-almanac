@@ -541,34 +541,71 @@ def _hourly_chart(d, fc, x, y, width, height, now):
             label = "12p" if h.hour == 12 else f"{h.hour % 12}{'a' if h.hour < 12 else 'p'}"
             d.text((_clamp_x(d, cx(i), label, C(12), x, width), y + height - 3), label, font=C(12), fill=BLACK, anchor="ms")
 
-    def label_at(i, text, fnt, yy, ink):
-        d.text((_clamp_x(d, cx(i), text, fnt, x, width), yy), text, font=fnt, fill=ink, anchor="ms",
-               stroke_width=2, stroke_fill=WHITE)
+    # Labels: the extremes first (they matter most), then the rain labels.
+    # Each tries its own hour, then half a bar and then a whole bar to
+    # either side, wherever it is free. A rain label with
+    # nowhere free is left out. An extreme is never left out: boxed in above
+    # its point (the now-marker's arrowhead shares the top band), it tries
+    # the same steps just below the point, and failing that stays put,
+    # drawn last and outlined in white.
+    avoid = []
+    if i_now is not None:  # the marker's dashes and arrowhead
+        avoid += [(nx - 2, y, nx + 3, base), (nx - 6, y, nx + 7, y + 8)]
+    d.marks["labels"] = placed = []
 
-    # The extremes go on last, outlined in white, so nothing covers them; a
-    # rain label that would sit under one of them is left out instead.
+    def place(i, text, fnt, yy):
+        def box_at(px):
+            return d.textbbox((px, yy), text, font=fnt, anchor="ms", stroke_width=2)
+
+        home = _clamp_x(d, cx(i), text, fnt, x, width)
+        if not any(_overlap(box_at(home), o) for o in avoid):
+            return home, False
+        for shift in (0.5, 1.0):
+            for sign in (1, -1):  # whichever side is free
+                px = home + sign * shift * step
+                b = box_at(px)
+                if b[0] >= x and b[2] <= x + width + 1 and not any(_overlap(b, o) for o in avoid):
+                    return px, True
+        return None, True
+
+    def keep(text, fnt, px, yy):
+        b = d.textbbox((px, yy), text, font=fnt, anchor="ms", stroke_width=2)
+        avoid.append(b)
+        placed.append((text, b))
+
     i_lo, i_hi = temps.index(lo), temps.index(hi)
-    extremes = [(i_lo, _deg(lo), ty(lo) - 6, BLUE), (i_hi, _deg(hi), ty(hi) - 6, RED)]
-    taken = [d.textbbox((_clamp_x(d, cx(i), t, CB(13), x, width), yy), t, font=CB(13), anchor="ms", stroke_width=2)
-             for i, t, yy, _ in extremes]
+    extremes = []
+    for i, t, yy, ink in ((i_lo, _deg(lo), ty(lo) - 6, BLUE), (i_hi, _deg(hi), ty(hi) - 6, RED)):
+        px, _ = place(i, t, CB(13), yy)
+        if px is None:
+            below = yy + 6 + 19  # the label's top just under the line
+            px, _ = place(i, t, CB(13), below)
+            yy = below if px is not None else yy
+        px = _clamp_x(d, cx(i), t, CB(13), x, width) if px is None else px
+        keep(t, CB(13), px, yy)
+        extremes.append((t, px, yy, ink))
+    # Rain: the wettest and the driest hour, each only where a bar is drawn.
     p_max, p_min = max(probs), min(probs)
-    if p_max > 0:  # label the wettest and the driest hour
-        i_max, i_min = probs.index(p_max), probs.index(p_min)
-        for i in [i_max] + ([i_min] if i_min != i_max else []):
-            p = probs[i]
-            text = f"{p}%"
-            inside = base - bar_top(p) >= 14  # white inside the bar's top, else blue above it
-            yy = bar_top(p) + 10 if inside else bar_top(p) - 3
-            px = _clamp_x(d, cx(i), text, CB(10), x, width)
-            box = d.textbbox((px, yy), text, font=CB(10), anchor="ms", stroke_width=0 if inside else 2)
-            if any(_overlap(box, t) for t in taken):
-                continue
-            if inside:
-                d.text((px, yy), text, font=CB(10), fill=WHITE, anchor="ms")
-            else:
-                label_at(i, text, CB(10), yy, BLUE)
-    for i, t, yy, ink in extremes:
-        label_at(i, t, CB(13), yy, ink)
+    wanted = [probs.index(p_max)] if p_max > 4 else []
+    if p_min > 4 and probs.index(p_min) not in wanted:
+        wanted.append(probs.index(p_min))
+    for i in wanted:
+        p = probs[i]
+        text = f"{p}%"
+        inside = base - bar_top(p) >= 14  # white inside the bar's top, else blue above it
+        yy = bar_top(p) + 10 if inside else bar_top(p) - 3
+        px, moved = place(i, text, CB(10), yy)
+        if px is None:
+            continue
+        keep(text, CB(10), px, yy)
+        if inside and not moved:
+            # White on its bar. A label is wider than a bar, so a blue halo
+            # carries the white past the bar's edges instead of losing them.
+            d.text((px, yy), text, font=CB(10), fill=WHITE, anchor="ms", stroke_width=2, stroke_fill=BLUE)
+        else:  # above its bar, or nudged off it: blue, outlined so it reads on paper or bar
+            d.text((px, yy), text, font=CB(10), fill=BLUE, anchor="ms", stroke_width=2, stroke_fill=WHITE)
+    for t, px, yy, ink in extremes:
+        d.text((px, yy), t, font=CB(13), fill=ink, anchor="ms", stroke_width=2, stroke_fill=WHITE)
 
 
 def _overlap(a, b):

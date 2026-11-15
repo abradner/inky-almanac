@@ -7,8 +7,10 @@ is capped below them, so hail and storms always lead.
 
 `score(inputs)` is pure: plain values in, facts out. `inputs_for(forecast,
 ...)` pulls those values out of a weather.Forecast, and `coming_hour(...)`
-does both. A top fact scoring FAST_REFRESH_SCORE or more asks the frame for
-the fast refresh a warning gets (see app.Almanac.alert).
+does both. The top fact's score also sets how often the panel re-checks
+the coming hour between hourly refreshes (`refresh_minutes`), and `digest`
+fingerprints what the panel would show, so only a real change redraws (see
+app.Almanac.alert).
 """
 
 from dataclasses import dataclass
@@ -19,7 +21,8 @@ from . import normals as normals_mod
 from . import weather
 from .palette import BLACK, BLUE, ORANGE, RED
 
-FAST_REFRESH_SCORE = 80
+# Re-check tiers: (lowest top-fact score, minutes between re-checks).
+REFRESH_TIERS = ((90, 5), (75, 15), (50, 30))
 NON_HAZARD_CAP = 89  # hail (100) and storms (90) always outrank everything else
 
 HAIL, STORMS = (96, 99), (95,)
@@ -241,8 +244,21 @@ def coming_hour(forecast, now, poster_day, is_tomorrow, normals=None):
     return Coming(now.hour, _hour(forecast, now + timedelta(hours=1)), score(i, normals))
 
 
-def fast_refresh_key(coming):
-    """'wx:<kind>' when the top fact is urgent enough to redraw now, else ""."""
-    if coming and coming.facts and coming.facts[0].score >= FAST_REFRESH_SCORE:
-        return "wx:" + coming.facts[0].key
-    return ""
+def refresh_minutes(coming):
+    """How often to re-check the coming hour: 5, 15 or 30 minutes by the top
+    fact's score, or None for the ordinary hourly refresh."""
+    top = coming.facts[0].score if coming and coming.facts else 0
+    return next((minutes for floor, minutes in REFRESH_TIERS if top >= floor), None)
+
+
+SHOWN_FACTS = 5  # the hero fact and up to four table rows
+
+
+def digest(coming):
+    """A short fingerprint of the facts the panel shows (the hero fact and the
+    table rows: label, value, sub-text). Equal digests mean nothing worth a
+    redraw changed."""
+    import hashlib
+
+    shown = [(f.label, f.value, f.sub) for f in (coming.facts if coming else [])[:SHOWN_FACTS]]
+    return hashlib.sha256(repr(shown).encode()).hexdigest()[:8]

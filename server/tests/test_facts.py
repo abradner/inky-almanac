@@ -308,12 +308,37 @@ def coming(*fs):
     return facts.Coming(14, None, list(fs))
 
 
-def test_fast_refresh_from_80():
-    hot = facts.Fact("rain", 80, "Rain next hr", "100% · 5 mm", BLUE)
-    assert facts.fast_refresh_key(coming(hot)) == "wx:rain"
-    assert facts.fast_refresh_key(coming(facts.Fact("rain", 79, "", "", BLUE))) == ""
-    assert facts.fast_refresh_key(coming()) == ""
-    assert facts.fast_refresh_key(None) == ""
+@pytest.mark.parametrize("top, minutes", [(49, None), (50, 30), (74, 30), (75, 15), (89, 15), (90, 5), (100, 5)])
+def test_refresh_tiers_follow_the_top_score(top, minutes):
+    assert facts.refresh_minutes(coming(facts.Fact("x", top, "", "", BLUE), facts.Fact("y", 10, "", "", BLUE))) == minutes
+
+
+def test_no_facts_no_tier():
+    assert facts.refresh_minutes(coming()) is None
+    assert facts.refresh_minutes(None) is None
+
+
+def shown(*values):
+    return coming(*[facts.Fact(f"k{i}", 60 - i, f"label {i}", v, BLUE, sub="s") for i, v in enumerate(values)])
+
+
+def test_digest_tracks_what_the_panel_shows():
+    a = shown("1", "2", "3", "4", "5")
+    assert facts.digest(a) == facts.digest(shown("1", "2", "3", "4", "5"))
+    assert len(facts.digest(a)) == 8
+    assert facts.digest(a) != facts.digest(shown("1", "2", "3", "4", "6"))  # a table row's value
+    assert facts.digest(a) != facts.digest(shown("9", "2", "3", "4", "5"))  # the hero fact
+    relabelled = coming(*[facts.Fact(f.key, f.score, "other", f.value, f.ink, f.sub) for f in a.facts])
+    assert facts.digest(a) != facts.digest(relabelled)
+    resubbed = coming(*[facts.Fact(f.key, f.score, f.label, f.value, f.ink, "t") for f in a.facts])
+    assert facts.digest(a) != facts.digest(resubbed)
+
+
+def test_digest_ignores_what_the_panel_does_not_show():
+    a = shown("1", "2", "3", "4", "5")
+    assert facts.digest(a) == facts.digest(shown("1", "2", "3", "4", "5", "a sixth, never drawn"))
+    rescored = coming(*[facts.Fact(f.key, f.score - 1, f.label, f.value, f.ink, f.sub) for f in a.facts])
+    assert facts.digest(a) == facts.digest(rescored)
 
 
 # ------------------------------------------------------------------ from a forecast
@@ -382,7 +407,7 @@ def test_coming_hour_ranks_the_forecast():
     assert c.label_hour == 7 and c.hour.hour == 8
     assert [f.key for f in c.facts][:2] == ["wind-change", "rain"]
     assert c.facts[1].label == "Snow next hr"
-    assert facts.fast_refresh_key(c) == "wx:wind-change"
+    assert facts.refresh_minutes(c) == 15  # 81
 
 
 def test_weather_parses_wind_direction_and_tolerates_its_absence():

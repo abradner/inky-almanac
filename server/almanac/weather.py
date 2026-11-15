@@ -188,11 +188,12 @@ def _url(cfg):
     return API + "?" + urllib.parse.urlencode(q)
 
 
-def load(cfg, now=None, fetch=None):
+def load(cfg, now=None, fetch=None, ttl=TTL_SECONDS):
     """Return a Forecast, from cache when fresh, from the network otherwise.
 
     Falls back to a stale cache when the network fails; returns None only if
-    there has never been a successful fetch.
+    there has never been a successful fetch. `ttl` is how old the cache may
+    be before a fetch (shorter while the panel re-checks an urgent hour).
     """
     now = time.time() if now is None else now
     path = cfg.cache_dir / "weather.json"
@@ -202,7 +203,7 @@ def load(cfg, now=None, fetch=None):
             cached = json.loads(path.read_text())
         except ValueError:
             cached = None
-    if cached and now - cached["fetched_at"] < TTL_SECONDS:
+    if cached and now - cached["fetched_at"] < ttl:
         return parse(cached["payload"], cached["fetched_at"])
     try:
         if fetch is None:

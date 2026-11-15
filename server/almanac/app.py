@@ -58,7 +58,7 @@ class Almanac:
         except (OSError, ValueError):
             self.last_seen = None
         self.on_change = []  # callbacks run after /shuffle (USB mode pushes at once)
-        self._held_fact = None  # (hour slot, "wx:<kind>"): see _fact_alert
+        self._held_fact = None  # (since, minutes, "wx:<digest>"): see _fact_alert
         self._held_lock = threading.Lock()
 
     # -- shuffle state survives restarts, resets each day
@@ -161,35 +161,55 @@ class Almanac:
 
     def _alert(self, now, day, is_tomorrow, forecast):
         """(conditions, alert id). The id joins the specific hazards' id with
-        "wx:<kind>" while the coming hour's top fact is urgent, so the frame's
-        existing /alert.json poll gives an urgent fact the fast refresh a
-        warning gets, under the same rules (a first alert or a clear redraws
-        at once; any other change at most every 10 minutes)."""
+        "wx:<digest>" while the coming hour has a fact worth re-checking for
+        (see _fact_alert), so the frame's existing /alert.json poll redraws
+        when what the panel would show changes, under the warning rules (a
+        first alert or a clear redraws at once; any other change at most
+        every 10 minutes)."""
         cond = self.conditions(day, is_tomorrow, now)
         parts = [cond.alert if cond else "", self._fact_alert(now, day, is_tomorrow, forecast)]
         return cond, "+".join(p for p in parts if p)
 
     def _fact_alert(self, now, day, is_tomorrow, forecast):
-        """"wx:<kind>" when the coming hour's top fact scores
-        facts.FAST_REFRESH_SCORE or more, else "".
+        """"wx:<digest of the facts shown>", re-checked at most once per tier
+        interval (facts.refresh_minutes: 5, 15 or 30 minutes by the top
+        fact's score), or "" when no tier applies (the hourly refresh covers
+        it).
 
-        Once raised it is held until the hour slot ends, even if the score
-        dips: the frame redraws at once on a first alert *and* on a clear, so
-        a score wobbling across the threshold would otherwise redraw the
-        panel each time. Held, an hour costs at most one immediate redraw,
-        and the poster refreshes on the hour anyway."""
+        Between re-checks the last answer is held, whatever the data does.
+        The frame redraws at once on a first alert *and* on a clear, so
+        letting a dropped tier or a vanished fact clear mid-interval would
+        cost a clear-then-raise pair of redraws. A *higher* tier is noticed
+        sooner: the hold lasts the shorter of the held tier's interval and
+        the current one's. An unchanged digest is an unchanged id: no
+        redraw."""
         try:
-            key = facts.fast_refresh_key(facts.coming_hour(forecast, now, day, is_tomorrow))
+            coming = facts.coming_hour(forecast, now, day, is_tomorrow)
+            minutes = facts.refresh_minutes(coming)
         except Exception as e:  # facts are optional; never let them take the poster down
             print(f"facts failed: {e!r}", flush=True)
-            key = ""
-        slot = schedule.slot(now)
+            coming, minutes = None, None
+        t = now.timestamp()
         with self._held_lock:
-            if key:
-                self._held_fact = (slot, key)
-            elif self._held_fact and self._held_fact[0] == slot:
-                key = self._held_fact[1]
-        return key
+            held = self._held_fact  # (since, minutes, id)
+            if held:
+                window = min(held[1], minutes or held[1]) * 60
+                if t - held[0] < window:
+                    return held[2]
+            if minutes is None:
+                self._held_fact = None
+                return ""
+            self._held_fact = (t, minutes, "wx:" + facts.digest(coming))
+            return self._held_fact[2]
+
+    def weather_ttl(self, now_ts=None):
+        """How old the forecast may get before the feed refresher fetches it
+        again: weather.TTL_SECONDS normally, shorter while a re-check tier is
+        active so the tier never re-reads data older than its own interval."""
+        held = self._held_fact
+        if not held:
+            return weather.TTL_SECONDS
+        return min(weather.TTL_SECONDS, held[1] * 60 - 60)  # a minute's slack for the 5-minute refresher
 
     def by_hash(self, digest):
         # No lock: a render in progress can hold it for a while, and list() of
@@ -341,7 +361,7 @@ def main():
         now = app.now()
         day, tomorrow = schedule.poster_day(now, cfg.tomorrow_from_hour)
         for name, job in (
-            ("weather", lambda: weather.load(cfg)),
+            ("weather", lambda: weather.load(cfg, ttl=app.weather_ttl())),
             ("bom", lambda: conditions.load_bom_days(cfg)),
             ("conditions", lambda: conditions.load(cfg, day, tomorrow)),
             ("photo", lambda: photos.photo_for(cfg, day, app.shuffle_count(day))),
