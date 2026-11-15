@@ -74,6 +74,7 @@ class Hour:
     wind: float = 0.0  # km/h
     gust: float = 0.0  # km/h
     uv: float = 0.0
+    wind_dir: float = None  # degrees the wind blows from; None if unknown
 
 
 @dataclass
@@ -138,6 +139,7 @@ def parse(payload, fetched_at):
                 wind=_num(_at(hourly, "wind_speed_10m", i)),
                 gust=_num(_at(hourly, "wind_gusts_10m", i)),
                 uv=_num(_at(hourly, "uv_index", i)),
+                wind_dir=_at(hourly, "wind_direction_10m", i),
             )
         )
     days = {}
@@ -165,8 +167,11 @@ def _url(cfg):
         "longitude": cfg.longitude,
         "timezone": cfg.timezone,
         "forecast_days": 4,
+        # The hourly series starts at 00:00 today, so the hours already past
+        # are there too (modelled, not observed): facts.py sums them for
+        # "since 9am".
         "current": "temperature_2m,weather_code",
-        "hourly": "temperature_2m,precipitation_probability,weather_code,precipitation,wind_speed_10m,wind_gusts_10m,uv_index",
+        "hourly": "temperature_2m,precipitation_probability,weather_code,precipitation,wind_speed_10m,wind_gusts_10m,wind_direction_10m,uv_index",
         "daily": ",".join(
             [
                 "weather_code",

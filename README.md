@@ -24,13 +24,21 @@ chosen photo is dithered for this panel's real ink colours, and the poster
 credits the photographer and licence.
 
 **The weather that matters today.**
-- **BOM's official forecast** for your town: the high and low, the
-  forecast text (*"Shower or two. Possible storm"*), and the chance and amount
-  of rain.
+- **BOM's official forecast** for your town: the forecast text (*"Shower or
+  two. Possible storm"*) and one pair of extremes, led by whichever comes
+  next: the overnight low before 9 am, today's high until 6 pm, then
+  tonight's low.
+- **The coming hour**, large: its sky, its temperature, and the most unusual
+  thing about it, with up to four more facts underneath. Facts are ranked by
+  how far out of the ordinary they are: hail and storms first, then heavy
+  rain, rain since 9 am, a wind change, strong wind, UV above normal, and a
+  high well off normal. A quiet hour says "nothing unusual".
 - **An hourly strip** from 6 am to 9 pm, with a temperature line, rain-chance
-  bars and a marker at the current hour.
-- **UV**, sunrise and sunset, day length, and the moon phase, drawn as it
-  looks from the southern hemisphere.
+  bars and a marker at the current hour. It takes whatever height is left.
+- Sunrise and sunset, day length, and the moon phase, drawn as it looks
+  from the southern hemisphere.
+
+![The side panel at its busiest: giant hail, a southerly change and 88 mm in the coming hour on a 46° afternoon](docs/img/panel-worstPhoto-photo.png)
 
 **Hazards, when there are any.** In the spirit of *Hazards Near Me*, badges
 appear over the photo, coloured by the Australian Warning System:
@@ -101,7 +109,9 @@ poster.
 | `server/almanac/dither.py` | Atkinson dithering, matching colours in CIELAB against measured ink colours |
 | `server/almanac/palette.py` | the seven inks: pen indices and real-world RGB |
 | `server/almanac/photos.py` | Commons photo pool, daily pick, colour screen |
-| `server/almanac/weather.py` | Open-Meteo forecast (hourly strip, UV, sun times) |
+| `server/almanac/weather.py` | Open-Meteo forecast (hourly strip, wind, UV, sun times) |
+| `server/almanac/facts.py` | the coming hour's facts and their scores (pure) |
+| `server/almanac/normals.py` | what the weather usually does (placeholder table for now) |
 | `server/almanac/bom.py` | BOM town forecast (FTP product IDN11060), overlaid on Open-Meteo |
 | `server/almanac/hazards.py` | RFS incidents, SES (via HazardWatch) and BOM warnings near home |
 | `server/almanac/conditions.py` | fire danger and fire ban, air quality, feed caching and staleness |
@@ -141,6 +151,14 @@ fail, restore.
 
 ## Previewing posters
 
+The side panel's layout stills in `docs/img/panel-*.png` (worst cases in
+photo and map mode, a normal day, a quiet morning, an evening) come from the
+test fixtures. Regenerate them rather than edit them:
+
+```bash
+docker run --rm -v "$PWD/server:/app" -v "$PWD/docs/img:/out" inky-almanac-test python tests/render_stills.py /out
+```
+
 The renderer's status page, `http://<renderer>:8077/`, shows the current
 poster, the photo, the conditions, and when the frame last checked in.
 
@@ -169,6 +187,7 @@ container). The defaults live in `server/almanac/config.py`.
 | `ALMANAC_PLACE`, `ALMANAC_LAT`, `ALMANAC_LON`, `ALMANAC_TZ` | Sydney, -33.87, 151.21, Australia/Sydney |
 | `ALMANAC_FIRST_HOUR`, `ALMANAC_LAST_HOUR` | 6, 22 (refresh window, inclusive) |
 | `ALMANAC_TOMORROW_FROM` | 18 |
+| `ALMANAC_HIGH_LEADS_FROM` | 9 (before this hour the header leads with the overnight low) |
 | `ALMANAC_BOM_TOWN` | Sydney (a town name from BOM's IDN11060 forecast product) |
 | `ALMANAC_HAZARD_RADIUS_KM` | 30 |
 | `ALMANAC_BOM_AREAS`, `ALMANAC_BOM_IGNORE` | which BOM warning titles count (comma separated) |
@@ -197,6 +216,13 @@ The photo categories are `CATEGORIES` in `photos.py`. The pool refreshes every
 - **No clock on the poster.** An hourly timestamp would force a full
   refresh every hour for nothing. Stale data is flagged instead.
 - **Evenings describe tomorrow.** Its photo and its forecast.
+- **An urgent coming hour refreshes like a warning.** When the top fact
+  scores 80 or more (hail, storms, very heavy rain, a violent wind change),
+  `/alert.json` carries it alongside the hazards, so the frame redraws within
+  minutes under the warning rules. It is held until the hour ends, so a
+  forecast wobbling across the line can't flash the panel.
+- **"Since 9am" is modelled.** It sums Open-Meteo's hourly precipitation, not
+  a rain gauge.
 - **Hazard data goes stale after 90 minutes.** An old "Advice" may have
   become an Emergency, or been cleared.
 - **BOM's daily numbers come from its public FTP product.** The undocumented

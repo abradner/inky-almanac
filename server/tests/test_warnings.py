@@ -224,23 +224,6 @@ def test_two_flood_warnings_for_different_rivers_both_survive():
 # ---- layout: condensed side panel, next-hour line, map mode ---------------------
 
 
-def H(**kw):
-    base = dict(hour=17, temp=21.4, rain_prob=10, code=1, rain_mm=0.0, wind=10.0, gust=15.0, uv=2.0)
-    base.update(kw)
-    return weather.Hour(**base)
-
-
-def test_next_hour_items_lead_with_what_matters():
-    from almanac.render import next_hour_items
-
-    texts = lambda h: [t for t, _ in next_hour_items(h)]
-    assert texts(H()) == ["Mostly sunny", "21°"]  # nothing notable: conditions + temperature
-    assert texts(H(code=96, rain_mm=4.2, gust=60, wind=30)) == ["Hail", "Rain 4 mm", "Windy 30/60 km/h"]
-    assert texts(H(rain_prob=70)) == ["Rain likely 70%", "21°"]
-    assert texts(H(rain_mm=0.6, uv=8)) == ["Rain 0.6 mm", "UV 8", "21°"]
-    assert len(next_hour_items(H(code=95, rain_mm=9, gust=80, uv=11))) == 3  # never more than 3
-
-
 def test_hour_labels():
     from almanac.render import _hour_label
 

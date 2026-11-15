@@ -507,11 +507,11 @@ def test_junk_from_open_meteo_never_replaces_a_good_cache(tmp_path):
 
 
 def test_evening_posters_only_change_when_the_data_does(tmp_path, monkeypatch):
-    # The next-hour line changes the poster every hour by design; everything
+    # The coming hour (hero and facts) changes the poster hourly by design; everything
     # else must stay put, or the panel redraws for nothing.
     import almanac.render as R
 
-    monkeypatch.setattr(R, "_next_hour", lambda d, forecast, x, y, now: y)
+    monkeypatch.setattr(R, "coming_hour", lambda *a, **k: None)
     fresh = datetime(2026, 11, 10, 18, 50, tzinfo=SYD).timestamp()  # stale stamps change hourly, rightly
     app = Almanac(
         cfg(tmp_path),
@@ -659,11 +659,11 @@ def test_requests_never_crawl_when_a_stale_pool_exists(tmp_path):
 
 
 def test_stale_stamp_does_not_change_hourly(tmp_path, monkeypatch):
-    # The next-hour line changes the poster every hour by design; everything
+    # The coming hour (hero and facts) changes the poster hourly by design; everything
     # else must stay put, or the panel redraws for nothing.
     import almanac.render as R
 
-    monkeypatch.setattr(R, "_next_hour", lambda d, forecast, x, y, now: y)
+    monkeypatch.setattr(R, "coming_hour", lambda *a, **k: None)
     fetched = datetime(2026, 11, 10, 6, 0, tzinfo=SYD).timestamp()
     app = Almanac(
         cfg(tmp_path),

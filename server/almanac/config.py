@@ -20,6 +20,9 @@ class Config:
     last_hour: int = field(default_factory=lambda: int(_env("ALMANAC_LAST_HOUR", "22")))
     # From this hour on, the weather panel shows tomorrow.
     tomorrow_from_hour: int = field(default_factory=lambda: int(_env("ALMANAC_TOMORROW_FROM", "18")))
+    # Before this hour the header leads with the overnight low; from it until
+    # tomorrow_from_hour, with today's high.
+    high_leads_from: int = field(default_factory=lambda: int(_env("ALMANAC_HIGH_LEADS_FROM", "9")))
     cache_dir: Path = field(default_factory=lambda: Path(_env("ALMANAC_CACHE", "/var/cache/almanac")))
     port: int = field(default_factory=lambda: int(_env("ALMANAC_PORT", "8077")))
     # NSW RFS fire district for the fire danger badge (empty = off).
