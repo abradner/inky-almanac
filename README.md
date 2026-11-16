@@ -343,6 +343,10 @@ NORMALS.normal_max(month, hour=None), NORMALS.normal_uv(month, hour=None)  # the
 
 ## Design choices worth knowing
 
+The full reasoning behind the panel, the scoring, the refresh tiers and the
+data sources is in [docs/design.md](docs/design.md). Read it before changing
+any of them.
+
 - **Palette indices are inks.** The frame decodes with `pngdec.PNG_COPY`,
   so the server owns all the colour decisions.
 - **No clock on the poster.** An hourly timestamp would force a full
@@ -357,8 +361,9 @@ NORMALS.normal_max(month, hour=None), NORMALS.normal_uv(month, hour=None)  # the
   the hourly refresh. Between re-checks the answer is held, so a fact that
   vanishes mid-interval can't flash the panel. While a tier is active the
   forecast is fetched as often as the tier re-checks.
-- **"Since 9am" is modelled.** It sums Open-Meteo's hourly precipitation, not
-  a rain gauge.
+- **"Since 9am" is measured when it can be.** It comes from the BOM station's
+  rain gauge (see "Station observations"); only when the station has no fresh
+  reading does it fall back to summing the model's hourly precipitation.
 - **Hazard data goes stale after 90 minutes.** An old "Advice" may have
   become an Emergency, or been cleared.
 - **BOM's daily numbers come from its public FTP product.** The undocumented
