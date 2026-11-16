@@ -26,6 +26,7 @@ from zoneinfo import ZoneInfo
 
 from . import conditions, facts, observed, providers, radar as radar_mod, schedule
 from .config import Config
+from .anchor import anchor_temps
 from .domain import apply_outlook
 from .providers.cache import offline
 from .palette import to_preview
@@ -117,7 +118,10 @@ class Almanac:
         return datetime.now(self.tz)
 
     def forecast(self):
-        """The model forecast with the official daily outlook over it.
+        """The model forecast with the official daily outlook over it: its
+        daily numbers replace the model's, and the model's hourly
+        temperatures are anchored to its max and min (anchor.py), so the
+        chart, the coming hour and the facts agree with the header.
         Cache-only (the loaders read disk caches), so cheap enough for the
         frame's alert poll."""
         forecast = self._weather()
@@ -126,6 +130,7 @@ class Almanac:
                 days = self._bom()
                 for d, b in days.items():
                     apply_outlook(forecast.day(d), b)
+                anchor_temps(forecast, days)
             except Exception as e:
                 print(f"outlook overlay failed: {e!r}", flush=True)
         return forecast

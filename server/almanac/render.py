@@ -393,17 +393,59 @@ def _header(d, x, y, *, now, forecast, day_fc, is_tomorrow, cfg):
     return max(bottom, dy + 22) + 1
 
 
+def rain_note(fc):
+    """(text, ink) for the day's rain from the official outlook ("80% · 2–8 mm"),
+    or None without one. Never the model's: no outlook, no figure."""
+    rng = re.sub(r"(\d) to (\d)", "\\1–\\2", fc.rain_text) if fc.rain_text else ""
+    parts = [f"{fc.rain_chance}%" if fc.rain_chance is not None else "", rng]
+    text = " · ".join(p for p in parts if p)
+    if not text:
+        return None
+    return text, BLUE if fc.rain_chance is not None and fc.rain_chance >= RAIN_NOTE_BLUE_FROM else BLACK
+
+
+RAIN_NOTE_BLUE_FROM = 30  # %: from here the day's rain is worth the blue ink
+
+
 def _forecast_line(d, fc, x, y, is_tomorrow):
     """The day's précis across the full width, two lines at most; from 6 pm it is
-    tomorrow's, and says so."""
+    tomorrow's, and says so.
+
+    The outlook's rain for the day (rain_note) follows the précis on its last
+    line (" · 80% · 2–8 mm") when it fits there. When it doesn't: a précis
+    already cut short at two lines is cut a little shorter to make room (it
+    was losing words anyway, and the panel below keeps its height); a précis
+    that fits two lines whole keeps them and the rain gets a short line of
+    its own."""
     prefix = "Tomorrow: " if is_tomorrow else ""
     indent = d.textlength(prefix, font=CB(14)) if prefix else 0
     lines = wrap(d, fc.label, C(14), SIDE_W, 2, first_indent=indent)
+    note = rain_note(fc)
+    inline = False
+    if note is not None and lines:
+        tail_w = d.textlength(" · " + note[0], font=C(14))
+        start = x + (indent if len(lines) == 1 else 0)
+        inline = start + d.textlength(lines[-1], font=C(14)) + tail_w <= x + SIDE_W
+        if not inline and len(lines) == 2 and lines[-1].endswith("…") and tail_w <= SIDE_W / 2:
+            rest = " ".join(fc.label.split()[len(lines[0].split()):])
+            lines[-1] = fit_text(d, rest, C(14), SIDE_W - tail_w)
+            inline = True
     if prefix:
         d.text((x, y), prefix.strip(), font=CB(14), fill=ORANGE)
     for i, line in enumerate(lines):
         d.text((x + (indent if i == 0 else 0), y + i * 17), line, font=C(14), fill=BLACK)
-    return y + max(1, len(lines)) * 17
+    n = max(1, len(lines))
+    if note is not None:
+        text, ink = note
+        if inline:
+            lx = x + (indent if len(lines) == 1 else 0) + d.textlength(lines[-1], font=C(14))
+            ny = y + (n - 1) * 17
+            d.text((lx, ny), " · ", font=C(14), fill=BLACK)
+            d.text((lx + d.textlength(" · ", font=C(14)), ny), text, font=C(14), fill=ink)
+        else:
+            d.text((x, y + n * 17), fit_text(d, text, C(14), SIDE_W), font=C(14), fill=ink)
+            n += 1
+    return y + n * 17
 
 
 # ---------------------------------------------------------------- coming hour
@@ -436,7 +478,7 @@ def _hero(d, coming, x, y):
     d.section = "hero"
     hour = coming.hour
     label = _hour_label(coming.label_hour).upper()
-    temp = _deg(hour.temp)
+    temp = _deg(hour.temp if coming.temp is None else coming.temp)  # observed now, when fresh
     col_w = max(d.textlength(label, font=CB(13)), d.textlength(temp, font=BOLD(50)))
     avail = SIDE_W - HERO_ICON - 4 - col_w - 8
     if coming.facts:
