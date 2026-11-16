@@ -13,8 +13,8 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from almanac import climate
-from almanac.climate import Obs
+from almanac.providers import climate
+from almanac.providers.climate import Obs
 from almanac.config import Config
 
 SYD = ZoneInfo("Australia/Sydney")

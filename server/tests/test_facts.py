@@ -5,7 +5,8 @@ from datetime import date, datetime
 
 import pytest
 
-from almanac import climate, facts, normals, weather
+from almanac import facts, normals
+from almanac.providers import climate, openmeteo as weather
 from almanac.facts import Inputs, score
 from almanac.palette import BLACK, BLUE, ORANGE, RED
 from panel_fixtures import SYD, forecast, preset

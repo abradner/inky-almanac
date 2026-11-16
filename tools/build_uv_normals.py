@@ -32,7 +32,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "server"))
-from almanac import climate  # noqa: E402
+from almanac.providers import climate  # noqa: E402
 
 TZ = "Australia/Sydney"
 UA = "inky-almanac/1.0 (https://github.com/abradner/inky-almanac; UV normals build)"

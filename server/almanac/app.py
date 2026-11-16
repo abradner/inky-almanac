@@ -22,34 +22,41 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 from zoneinfo import ZoneInfo
 
-from . import bom, climate, conditions, facts, photos
-from . import schedule, weather
+from . import conditions, facts, observed, providers, schedule
 from .config import Config
+from .domain import apply_outlook
+from .providers.cache import offline
 from .palette import to_preview
 from .render import render
 
 
 ALERT_POLL_MINUTES = 2  # how often a USB-powered frame asks /alert.json
 ALERT_REFRESH_S = 90  # how often the renderer re-reads the hazard feeds
+OBS_CHECK_S = 60  # how often to ask the observations provider (it rate-limits itself)
+DEFAULT_FORECAST_TTL_S = 20 * 60  # for a forecast provider that doesn't say
 
 
 class Almanac:
-    def __init__(self, cfg, *, weather_loader=None, photo_loader=None, conditions_loader=None, bom_loader=None):
+    def __init__(self, cfg, *, weather_loader=None, photo_loader=None, conditions_loader=None, bom_loader=None,
+                 observations_loader=None):
         self.cfg = cfg
         self.tz = ZoneInfo(cfg.timezone)
         self.cfg.cache_dir.mkdir(parents=True, exist_ok=True)
         self._lock = threading.Lock()
         self._cache = {}
-        # Requests read caches only; refresh_feeds() (a background thread in
-        # production) does the network work, so a slow or dead feed can never
-        # make the frame's 60 s poll time out.
-        self._weather = weather_loader or (lambda: weather.load(cfg, fetch=conditions.offline))
-        self._photo = photo_loader or (lambda day, shuffle: photos.photo_for(cfg, day, shuffle))
-        self._bom = bom_loader or (lambda: conditions.load_bom_days(cfg, get_text=conditions.offline))
+        # Requests read caches only (the providers get the offline
+        # transport); refresh_feeds() (a background thread in production)
+        # does the network work, so a slow or dead feed can never make the
+        # frame's 60 s poll time out.
+        p = self.providers = providers.build(cfg, get_text=offline)
+        self._weather = weather_loader or (lambda: p.forecast.forecast() if p.forecast else None)
+        self._photo = photo_loader or (lambda day, shuffle: p.photos.photo_for(day, shuffle) if p.photos else None)
+        self._bom = bom_loader or (lambda: p.outlook.outlook() if p.outlook else {})
         self._conditions = conditions_loader or (
-            lambda day, tomorrow, from_hour: conditions.load(
-                cfg, day, tomorrow, from_hour=from_hour, get_text=conditions.offline
-            )
+            lambda day, tomorrow, from_hour: conditions.load(cfg, day, tomorrow, from_hour=from_hour, providers=p)
+        )
+        self._observations = observations_loader or (
+            lambda now: observed.summarise(p.observations.logs(), now) if p.observations else None
         )
         self.ota_dir = Path(__file__).resolve().parents[1] / "ota"  # signed frame release
         self._seen_path = cfg.cache_dir / "frame-last-seen.json"
@@ -97,25 +104,34 @@ class Almanac:
         return datetime.now(self.tz)
 
     def forecast(self):
-        """Open-Meteo's forecast with BOM's official daily numbers over it.
+        """The model forecast with the official daily outlook over it.
         Cache-only (the loaders read disk caches), so cheap enough for the
         frame's alert poll."""
         forecast = self._weather()
         if forecast is not None:
-            try:  # BOM's official daily numbers over Open-Meteo's (optional)
+            try:  # official daily numbers over the model's (optional)
                 days = self._bom()
                 for d, b in days.items():
-                    bom.overlay(forecast.day(d), b)
+                    apply_outlook(forecast.day(d), b)
             except Exception as e:
-                print(f"BOM overlay failed: {e!r}", flush=True)
+                print(f"outlook overlay failed: {e!r}", flush=True)
         return forecast
+
+    def observed(self, now):
+        """What the stations have seen (observed.Observed), or None. Cache-only."""
+        try:  # observations are optional; never let them take the poster down
+            return self._observations(now)
+        except Exception as e:
+            print(f"observations failed: {e!r}", flush=True)
+            return None
 
     def poster(self, now):
         """Render (or reuse this hour's render of) the poster for `now`."""
         day, is_tomorrow = schedule.poster_day(now, self.cfg.tomorrow_from_hour)
         shuffle = self.shuffle_count(day)
         forecast = self.forecast()
-        cond, alert = self._alert(now, day, is_tomorrow, forecast)
+        obs = self.observed(now)
+        cond, alert = self._alert(now, day, is_tomorrow, forecast, obs)
         # The alert is part of the key: a warning issued mid-hour (or an
         # urgent fact about the coming hour) must make a new poster now, not
         # at the next slot.
@@ -125,7 +141,8 @@ class Almanac:
             if hit:
                 return hit
             photo = self._photo(day, shuffle)
-            canvas = render(now=now, poster_day=day, is_tomorrow=is_tomorrow, forecast=forecast, photo=photo, cfg=self.cfg, cond=cond)
+            canvas = render(now=now, poster_day=day, is_tomorrow=is_tomorrow, forecast=forecast, photo=photo, cfg=self.cfg, cond=cond,
+                            observed=obs)
             buf = io.BytesIO()
             canvas.save(buf, "PNG", bits=4, optimize=True)
             png = buf.getvalue()
@@ -157,9 +174,9 @@ class Almanac:
     def alert(self, now):
         """The current alert id: cheap, cache-only (what the frame polls)."""
         day, is_tomorrow = schedule.poster_day(now, self.cfg.tomorrow_from_hour)
-        return self._alert(now, day, is_tomorrow, self.forecast())[1]
+        return self._alert(now, day, is_tomorrow, self.forecast(), self.observed(now))[1]
 
-    def _alert(self, now, day, is_tomorrow, forecast):
+    def _alert(self, now, day, is_tomorrow, forecast, obs=None):
         """(conditions, alert id). The id joins the specific hazards' id with
         "wx:<digest>" while the coming hour has a fact worth re-checking for
         (see _fact_alert), so the frame's existing /alert.json poll redraws
@@ -167,10 +184,10 @@ class Almanac:
         first alert or a clear redraws at once; any other change at most
         every 10 minutes)."""
         cond = self.conditions(day, is_tomorrow, now)
-        parts = [cond.alert if cond else "", self._fact_alert(now, day, is_tomorrow, forecast)]
+        parts = [cond.alert if cond else "", self._fact_alert(now, day, is_tomorrow, forecast, obs)]
         return cond, "+".join(p for p in parts if p)
 
-    def _fact_alert(self, now, day, is_tomorrow, forecast):
+    def _fact_alert(self, now, day, is_tomorrow, forecast, obs=None):
         """"wx:<digest>" while a re-check tier applies (facts.refresh_minutes:
         10, 15 or 30 minutes by the top fact's score), or "" when none does
         (the hourly refresh covers it).
@@ -188,7 +205,7 @@ class Almanac:
         so the first re-check in a new hour takes the current facts as the
         drawn state."""
         try:
-            coming = facts.coming_hour(forecast, now, day, is_tomorrow)
+            coming = facts.coming_hour(forecast, now, day, is_tomorrow, observed=obs)
             minutes = facts.refresh_minutes(coming)
         except Exception as e:  # facts are optional; never let them take the poster down
             print(f"facts failed: {e!r}", flush=True)
@@ -214,12 +231,14 @@ class Almanac:
 
     def weather_ttl(self, now_ts=None):
         """How old the forecast may get before the feed refresher fetches it
-        again: weather.TTL_SECONDS normally, shorter while a re-check tier is
-        active so the tier never re-reads data older than its own interval."""
+        again: the forecast provider's own ttl normally, shorter while a
+        re-check tier is active so the tier never re-reads data older than its
+        own interval."""
+        base = getattr(self.providers.forecast, "ttl", DEFAULT_FORECAST_TTL_S)
         held = self._held_fact
         if not held:
-            return weather.TTL_SECONDS
-        return min(weather.TTL_SECONDS, held[1] * 60 - 60)  # a minute's slack for the 5-minute refresher
+            return base
+        return min(base, held[1] * 60 - 60)  # a minute's slack for the 5-minute refresher
 
     def by_hash(self, digest):
         # No lock: a render in progress can hold it for a while, and list() of
@@ -366,16 +385,20 @@ def main():
         app.on_change.append(pusher.wake.set)
         pusher.start()
         print(f"usb mode: driving the frame on {cfg.usb_device}", flush=True)
+    live = providers.build(cfg)  # the network-facing adapters: background threads only
+
     def refresh_feeds():
         """Fetch every feed into its disk cache (the only network path)."""
         now = app.now()
         day, tomorrow = schedule.poster_day(now, cfg.tomorrow_from_hour)
-        for name, job in (
-            ("weather", lambda: weather.load(cfg, ttl=app.weather_ttl())),
-            ("bom", lambda: conditions.load_bom_days(cfg)),
-            ("conditions", lambda: conditions.load(cfg, day, tomorrow)),
-            ("photo", lambda: photos.photo_for(cfg, day, app.shuffle_count(day))),
-        ):
+        jobs = [("conditions", lambda: conditions.load(cfg, day, tomorrow, providers=live))]
+        if live.forecast:
+            jobs.insert(0, ("forecast", lambda: live.forecast.forecast(ttl=app.weather_ttl())))
+        if live.outlook:
+            jobs.insert(1, ("outlook", lambda: live.outlook.outlook()))
+        if live.photos:
+            jobs.append(("photo", lambda: live.photos.photo_for(day, app.shuffle_count(day))))
+        for name, job in jobs:
             try:
                 job()
             except Exception as e:
@@ -395,27 +418,44 @@ def main():
             now = app.now()
             day, tomorrow = schedule.poster_day(now, cfg.tomorrow_from_hour)
             try:
-                conditions.load(cfg, day, tomorrow)
+                conditions.load(cfg, day, tomorrow, providers=live)
             except Exception as e:
                 print(f"warning refresh failed: {e!r}", flush=True)
 
     threading.Thread(target=keep_warnings_fresh, name="warnings", daemon=True).start()
 
+    def keep_observations_fresh():
+        """Asks every OBS_CHECK_S; the provider fetches only at its source's
+        cadence and backs off on failure."""
+        while True:
+            try:
+                live.observations.refresh()
+            except Exception as e:
+                print(f"observations refresh failed: {e!r}", flush=True)
+            time.sleep(OBS_CHECK_S)
+
+    if live.observations:
+        threading.Thread(target=keep_observations_fresh, name="observations", daemon=True).start()
+
     refresh_feeds()  # warm the caches before the first request
     threading.Thread(target=keep_feeds_fresh, name="feeds", daemon=True).start()
 
-    def keep_pool_fresh():  # the fortnightly Commons crawl takes minutes; never in a request
+    def keep_pool_fresh():  # a photo pool crawl can take minutes; never in a request
         while True:
             try:
-                photos.load_pool(cfg, refresh=True)
+                live.photos.refresh_pool()
             except Exception as e:
                 print(f"photo pool refresh failed: {e!r}", flush=True)
             time.sleep(6 * 3600)
 
-    threading.Thread(target=keep_pool_fresh, name="pool", daemon=True).start()
-    # Hourly climate normals for this location: a 30-year archive pull, the
-    # first time and yearly after; the placeholder answers until it is done.
-    climate.start_background_build(cfg)
+    if live.photos:
+        threading.Thread(target=keep_pool_fresh, name="pool", daemon=True).start()
+    # Normals that are built from an archive (ERA5: a 30-year pull, the first
+    # time and yearly after) build in the background; their placeholder
+    # answers until they are done.
+    normals = providers.normals(cfg.normals_provider)
+    if hasattr(normals, "start_background_build"):
+        normals.start_background_build(cfg)
     server = ThreadingHTTPServer(("0.0.0.0", cfg.port), make_handler(app))
     print(f"inky-almanac listening on :{cfg.port} for {cfg.place}", flush=True)
     server.serve_forever()

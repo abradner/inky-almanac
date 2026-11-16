@@ -5,8 +5,9 @@ Anything that answers `normal_max(month, hour=None)` and
 (`facts.py`) takes one as an argument, so swapping in a better table is a
 one-line change where it is constructed (`DEFAULT` below).
 
-`DEFAULT` is `climate.NORMALS`: ERA5 hourly normals for the configured
-location once built, with ARPANSA's measured UV. `PLACEHOLDER` below is a
+`DEFAULT` is whatever ALMANAC_NORMALS selects: by default
+`providers.climate.NORMALS`, ERA5 hourly normals for the configured location
+once built, with ARPANSA's measured UV. `PLACEHOLDER` below is a
 rough monthly table for central Sydney (it ignores `hour`), kept for tests
 and as a minimal example of the interface.
 """
@@ -14,7 +15,6 @@ and as a minimal example of the interface.
 from dataclasses import dataclass
 from typing import Optional, Protocol
 
-from . import climate
 
 
 class Normals(Protocol):
@@ -53,4 +53,15 @@ PLACEHOLDER = MonthlyNormals(
     uv=(13, 12, 10, 7, 4, 3, 3, 5, 7, 9, 11, 12),
 )
 
-DEFAULT = climate.NORMALS
+
+def _default():
+    # Whatever ALMANAC_NORMALS selects (climate.NORMALS, the ERA5 table, by
+    # default). Imported here, after PLACEHOLDER exists, because the
+    # placeholder is itself a registered choice.
+    from .config import Config
+    from .providers import normals as provider
+
+    return provider(Config().normals_provider)
+
+
+DEFAULT = _default()

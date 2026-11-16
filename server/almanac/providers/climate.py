@@ -1,4 +1,5 @@
-"""Climate normals: what the weather usually does here, by month and hour.
+"""Normals adapter: what the weather usually does here, by month and hour
+(Open-Meteo ERA5 archive + ARPANSA UV), answering normals.Normals.
 
 A fact scorer compares a forecast against these ("4 degrees above normal for
 3 pm in November"). Every cell is keyed by (month 1-12, hour 0-23) of local
@@ -59,7 +60,7 @@ _BEFORE_SOUTHERLY = {"N", "NE", "NW", "W"}
 _SOUTHERLY = {"S", "SE", "SW"}
 
 UV_CREDIT = "UV observations courtesy of ARPANSA"
-UV_PATH = Path(__file__).parent / "data" / "uv_normals.json"
+UV_PATH = Path(__file__).parents[1] / "data" / "uv_normals.json"
 
 
 # ------------------------------------------------------------------ statistics
@@ -747,7 +748,7 @@ class LiveNormals:
 
     def current(self):
         if self._cfg is None:
-            from .config import Config
+            from ..config import Config
 
             self._cfg = Config()
         path = self._cfg.cache_dir / CACHE_NAME
@@ -761,6 +762,11 @@ class LiveNormals:
                 self._normals = load(self._cfg, self._uv_path)
                 self._stamp = stamp
             return self._normals
+
+    def start_background_build(self, cfg):
+        """Keep the ERA5 table built for cfg's location (see the module
+        function); app.py calls this once at startup."""
+        return start_background_build(cfg)
 
     def __getattr__(self, name):
         if name in LiveNormals._API:

@@ -1,0 +1,192 @@
+<?xml version="1.0"?>
+<product xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" version="v1.7.1" xsi:noNamespaceSchemaLocation="http://www.bom.gov.au/schema/v1.7/product.xsd">
+  <amoc>
+    <source>
+      <sender>Australian Government Bureau of Meteorology</sender>
+      <region>New South Wales</region>
+      <office>NSWRO</office>
+      <copyright>http://www.bom.gov.au/other/copyright.shtml</copyright>
+      <disclaimer>http://www.bom.gov.au/other/disclaimer.shtml</disclaimer>
+    </source>
+    <identifier>IDN60920</identifier>
+    <issue-time-utc>2026-11-16T00:01:03+00:00</issue-time-utc>
+    <issue-time-local tz="EDT">2026-11-16T11:01:03+11:00</issue-time-local>
+    <sent-time>2026-11-16T00:04:12+00:00</sent-time>
+    <status>O</status>
+    <service>WSP</service>
+    <product-type>O</product-type>
+    <phase>NEW</phase>
+  </amoc>
+  <observations>
+    <station wmo-id="94768" bom-id="066214" tz="Australia/Sydney" stn-name="SYDNEY (OBSERVATORY HILL)" stn-height="43.37" type="AWS" lat="-33.8593" lon="151.2048" forecast-district-id="NSW_PW005" description="Sydney - Observatory Hill">
+      <period index="0" time-utc="2026-11-16T00:00:00+00:00" time-local="2026-11-16T11:00:00+11:00" wind-src="metar_10">
+        <level index="0" type="surface">
+          <element units="Celsius" type="apparent_temp">17.2</element>
+          <element units="Celsius" type="delta_t">1.1</element>
+          <element units="Celsius" type="air_temperature">17.7</element>
+          <element units="Celsius" type="dew_point">15.9</element>
+          <element units="hPa" type="pres">1016.2</element>
+          <element units="hPa" type="msl_pres">1016.2</element>
+          <element units="hPa" type="qnh_pres">1016.3</element>
+          <element units="mm" type="rain_hour">2.8</element>
+          <element units="mm" type="rain_ten">0.0</element>
+          <element units="%" type="rel-humidity">89</element>
+          <element type="wind_dir">S</element>
+          <element units="deg" type="wind_dir_deg">186</element>
+          <element units="km/h" type="wind_spd_kmh">13</element>
+          <element units="knots" type="wind_spd">7</element>
+          <element start-time-local="2026-11-16T09:00:00+11:00" end-time-local="2026-11-16T11:04:00+11:00" duration="124" start-time-utc="2026-11-15T22:00:00+00:00" end-time-utc="2026-11-16T00:04:00+00:00" units="mm" type="rainfall">3.0</element>
+          <element start-time-local="2026-11-15T09:00:00+11:00" end-time-local="2026-11-16T09:00:00+11:00" duration="1440" start-time-utc="2026-11-14T22:00:00+00:00" end-time-utc="2026-11-15T22:00:00+00:00" units="mm" type="rainfall_24hr">6.6</element>
+          <element start-time-local="2026-11-16T06:00:00+11:00" end-time-local="2026-11-16T21:00:00+11:00" start-time-utc="2026-11-15T19:00:00+00:00" end-time-utc="2026-11-16T10:00:00+00:00" units="Celsius" type="maximum_air_temperature" instance="running" time-utc="2026-11-16T00:00:00+00:00" time-local="2026-11-16T11:00:00+11:00">17.8</element>
+          <element start-time-local="2026-11-15T18:00:00+11:00" end-time-local="2026-11-16T09:00:00+11:00" start-time-utc="2026-11-15T07:00:00+00:00" end-time-utc="2026-11-15T22:00:00+00:00" units="Celsius" type="minimum_air_temperature" instance="running" time-utc="2026-11-15T20:24:00+00:00" time-local="2026-11-16T07:24:00+11:00">16.0</element>
+        </level>
+      </period>
+    </station>
+    <station wmo-id="95756" bom-id="066043" tz="Australia/Sydney" stn-name="KURNELL AWS" stn-height="4.00" type="AWS" lat="-34.0039" lon="151.2111" forecast-district-id="NSW_MW009" description="Kurnell">
+      <period index="0" time-utc="2026-11-16T00:00:00+00:00" time-local="2026-11-16T11:00:00+11:00" wind-src="metar_10">
+        <level index="0" type="surface">
+          <element units="km/h" type="gust_kmh">30</element>
+          <element units="knots" type="wind_gust_spd">16</element>
+          <element type="wind_dir">S</element>
+          <element units="deg" type="wind_dir_deg">187</element>
+          <element units="km/h" type="wind_spd_kmh">22</element>
+          <element units="knots" type="wind_spd">12</element>
+          <element start-time-local="2026-11-16T00:00:00+11:00" end-time-local="2026-11-17T00:00:00+11:00" start-time-utc="2026-11-15T13:00:00+00:00" end-time-utc="2026-11-16T13:00:00+00:00" units="knots" type="maximum_gust_spd" instance="running" time-utc="2026-11-15T21:35:00+00:00" time-local="2026-11-16T08:35:00+11:00">27</element>
+          <element start-time-local="2026-11-16T00:00:00+11:00" end-time-local="2026-11-17T00:00:00+11:00" start-time-utc="2026-11-15T13:00:00+00:00" end-time-utc="2026-11-16T13:00:00+00:00" units="km/h" type="maximum_gust_kmh" instance="running" time-utc="2026-11-15T21:35:00+00:00" time-local="2026-11-16T08:35:00+11:00">50</element>
+          <element start-time-local="2026-11-16T00:00:00+11:00" end-time-local="2026-11-17T00:00:00+11:00" start-time-utc="2026-11-15T13:00:00+00:00" end-time-utc="2026-11-16T13:00:00+00:00" type="maximum_gust_dir" instance="running" time-utc="2026-11-15T21:35:00+00:00" time-local="2026-11-16T08:35:00+11:00">SW</element>
+        </level>
+      </period>
+    </station>
+    <station wmo-id="94767" bom-id="066037" tz="Australia/Sydney" stn-name="SYDNEY AIRPORT AMO" stn-height="6.00" type="AWS" lat="-33.9465" lon="151.1731" forecast-district-id="NSW_PW005" description="Sydney Airport">
+      <period index="0" time-utc="2026-11-16T00:00:00+00:00" time-local="2026-11-16T11:00:00+11:00" wind-src="TMD">
+        <level index="0" type="surface">
+          <element units="Celsius" type="apparent_temp">13.3</element>
+          <element type="cloud">Mostly clear</element>
+          <element type="cloud_oktas">1</element>
+          <element units="Celsius" type="delta_t">0.9</element>
+          <element units="km/h" type="gust_kmh">30</element>
+          <element units="knots" type="wind_gust_spd">16</element>
+          <element units="Celsius" type="air_temperature">16.3</element>
+          <element units="Celsius" type="dew_point">14.7</element>
+          <element units="hPa" type="pres">1016.2</element>
+          <element units="hPa" type="msl_pres">1016.2</element>
+          <element units="hPa" type="qnh_pres">1016.2</element>
+          <element units="%" type="rel-humidity">90</element>
+          <element units="km" type="vis_km">12</element>
+          <element type="wind_dir">S</element>
+          <element units="deg" type="wind_dir_deg">186</element>
+          <element units="km/h" type="wind_spd_kmh">24</element>
+          <element units="knots" type="wind_spd">13</element>
+          <element start-time-local="2026-11-16T09:00:00+11:00" end-time-local="2026-11-16T11:04:00+11:00" duration="124" start-time-utc="2026-11-15T22:00:00+00:00" end-time-utc="2026-11-16T00:04:00+00:00" units="mm" type="rainfall">0.8</element>
+          <element start-time-local="2026-11-15T09:00:00+11:00" end-time-local="2026-11-16T09:00:00+11:00" duration="1440" start-time-utc="2026-11-14T22:00:00+00:00" end-time-utc="2026-11-15T22:00:00+00:00" units="mm" type="rainfall_24hr">2.6</element>
+          <element start-time-local="2026-11-16T06:00:00+11:00" end-time-local="2026-11-16T21:00:00+11:00" start-time-utc="2026-11-15T19:00:00+00:00" end-time-utc="2026-11-16T10:00:00+00:00" units="Celsius" type="maximum_air_temperature" instance="running" time-utc="2026-11-15T20:01:00+00:00" time-local="2026-11-16T07:01:00+11:00">18.2</element>
+          <element start-time-local="2026-11-15T18:00:00+11:00" end-time-local="2026-11-16T09:00:00+11:00" start-time-utc="2026-11-15T07:00:00+00:00" end-time-utc="2026-11-15T22:00:00+00:00" units="Celsius" type="minimum_air_temperature" instance="running" time-utc="2026-11-15T21:36:00+00:00" time-local="2026-11-16T08:36:00+11:00">16.3</element>
+          <element start-time-local="2026-11-16T00:00:00+11:00" end-time-local="2026-11-17T00:00:00+11:00" start-time-utc="2026-11-15T13:00:00+00:00" end-time-utc="2026-11-16T13:00:00+00:00" units="knots" type="maximum_gust_spd" instance="running" time-utc="2026-11-15T15:33:00+00:00" time-local="2026-11-16T02:33:00+11:00">28</element>
+          <element start-time-local="2026-11-16T00:00:00+11:00" end-time-local="2026-11-17T00:00:00+11:00" start-time-utc="2026-11-15T13:00:00+00:00" end-time-utc="2026-11-16T13:00:00+00:00" units="km/h" type="maximum_gust_kmh" instance="running" time-utc="2026-11-15T15:33:00+00:00" time-local="2026-11-16T02:33:00+11:00">52</element>
+          <element start-time-local="2026-11-16T00:00:00+11:00" end-time-local="2026-11-17T00:00:00+11:00" start-time-utc="2026-11-15T13:00:00+00:00" end-time-utc="2026-11-16T13:00:00+00:00" type="maximum_gust_dir" instance="running" time-utc="2026-11-15T15:33:00+00:00" time-local="2026-11-16T02:33:00+11:00">SSW</element>
+        </level>
+      </period>
+    </station>
+    <station wmo-id="94769" bom-id="066022" tz="Australia/Sydney" stn-name="FORT DENISON" stn-height="5.00" type="AWS" lat="-33.8551" lon="151.2254" forecast-district-id="NSW_MW009" description="Fort Denison">
+      <period index="0" time-utc="2026-11-16T00:00:00+00:00" time-local="2026-11-16T11:00:00+11:00" wind-src="metar_10">
+        <level index="0" type="surface">
+          <element units="km/h" type="gust_kmh">20</element>
+          <element units="knots" type="wind_gust_spd">11</element>
+          <element type="wind_dir">S</element>
+          <element units="deg" type="wind_dir_deg">186</element>
+          <element units="km/h" type="wind_spd_kmh">13</element>
+          <element units="knots" type="wind_spd">7</element>
+          <element start-time-local="2026-11-16T00:00:00+11:00" end-time-local="2026-11-17T00:00:00+11:00" start-time-utc="2026-11-15T13:00:00+00:00" end-time-utc="2026-11-16T13:00:00+00:00" units="knots" type="maximum_gust_spd" instance="running" time-utc="2026-11-15T15:50:00+00:00" time-local="2026-11-16T02:50:00+11:00">21</element>
+          <element start-time-local="2026-11-16T00:00:00+11:00" end-time-local="2026-11-17T00:00:00+11:00" start-time-utc="2026-11-15T13:00:00+00:00" end-time-utc="2026-11-16T13:00:00+00:00" units="km/h" type="maximum_gust_kmh" instance="running" time-utc="2026-11-15T15:50:00+00:00" time-local="2026-11-16T02:50:00+11:00">39</element>
+          <element start-time-local="2026-11-16T00:00:00+11:00" end-time-local="2026-11-17T00:00:00+11:00" start-time-utc="2026-11-15T13:00:00+00:00" end-time-utc="2026-11-16T13:00:00+00:00" type="maximum_gust_dir" instance="running" time-utc="2026-11-15T15:50:00+00:00" time-local="2026-11-16T02:50:00+11:00">SSE</element>
+        </level>
+      </period>
+    </station>
+    <station wmo-id="94760" bom-id="067119" tz="Australia/Sydney" stn-name="HORSLEY PARK EQUESTRIAN CENTRE AWS" stn-height="100.00" type="AWS" lat="-33.8510" lon="150.8567" forecast-district-id="NSW_PW005" description="Horsley Park">
+      <period index="0" time-utc="2026-11-16T00:00:00+00:00" time-local="2026-11-16T11:00:00+11:00" wind-src="metar_10">
+        <level index="0" type="surface">
+          <element units="Celsius" type="apparent_temp">16.5</element>
+          <element units="Celsius" type="delta_t">2.6</element>
+          <element units="km/h" type="gust_kmh">24</element>
+          <element units="knots" type="wind_gust_spd">13</element>
+          <element units="Celsius" type="air_temperature">17.9</element>
+          <element units="Celsius" type="dew_point">13.4</element>
+          <element units="mm" type="rain_hour">0.0</element>
+          <element units="mm" type="rain_ten">0.0</element>
+          <element units="%" type="rel-humidity">75</element>
+          <element type="wind_dir">SSW</element>
+          <element units="deg" type="wind_dir_deg">196</element>
+          <element units="km/h" type="wind_spd_kmh">13</element>
+          <element units="knots" type="wind_spd">7</element>
+          <element start-time-local="2026-11-16T09:00:00+11:00" end-time-local="2026-11-16T11:04:00+11:00" duration="124" start-time-utc="2026-11-15T22:00:00+00:00" end-time-utc="2026-11-16T00:04:00+00:00" units="mm" type="rainfall">0.0</element>
+          <element start-time-local="2026-11-15T09:00:00+11:00" end-time-local="2026-11-16T09:00:00+11:00" duration="1440" start-time-utc="2026-11-14T22:00:00+00:00" end-time-utc="2026-11-15T22:00:00+00:00" units="mm" type="rainfall_24hr">0.2</element>
+          <element start-time-local="2026-11-16T06:00:00+11:00" end-time-local="2026-11-16T21:00:00+11:00" start-time-utc="2026-11-15T19:00:00+00:00" end-time-utc="2026-11-16T10:00:00+00:00" units="Celsius" type="maximum_air_temperature" instance="running" time-utc="2026-11-15T23:24:00+00:00" time-local="2026-11-16T10:24:00+11:00">18.6</element>
+          <element start-time-local="2026-11-15T18:00:00+11:00" end-time-local="2026-11-16T09:00:00+11:00" start-time-utc="2026-11-15T07:00:00+00:00" end-time-utc="2026-11-15T22:00:00+00:00" units="Celsius" type="minimum_air_temperature" instance="running" time-utc="2026-11-15T18:48:00+00:00" time-local="2026-11-16T05:48:00+11:00">14.7</element>
+          <element start-time-local="2026-11-16T00:00:00+11:00" end-time-local="2026-11-17T00:00:00+11:00" start-time-utc="2026-11-15T13:00:00+00:00" end-time-utc="2026-11-16T13:00:00+00:00" units="knots" type="maximum_gust_spd" instance="running" time-utc="2026-11-15T23:28:00+00:00" time-local="2026-11-16T10:28:00+11:00">15</element>
+          <element start-time-local="2026-11-16T00:00:00+11:00" end-time-local="2026-11-17T00:00:00+11:00" start-time-utc="2026-11-15T13:00:00+00:00" end-time-utc="2026-11-16T13:00:00+00:00" units="km/h" type="maximum_gust_kmh" instance="running" time-utc="2026-11-15T23:28:00+00:00" time-local="2026-11-16T10:28:00+11:00">28</element>
+          <element start-time-local="2026-11-16T00:00:00+11:00" end-time-local="2026-11-17T00:00:00+11:00" start-time-utc="2026-11-15T13:00:00+00:00" end-time-utc="2026-11-16T13:00:00+00:00" type="maximum_gust_dir" instance="running" time-utc="2026-11-15T23:28:00+00:00" time-local="2026-11-16T10:28:00+11:00">S</element>
+        </level>
+      </period>
+    </station>
+    <station wmo-id="95765" bom-id="066212" tz="Australia/Sydney" stn-name="SYDNEY OLYMPIC PARK AWS (ARCHERY CENTRE)" stn-height="4.00" type="AWS" lat="-33.8338" lon="151.0718" forecast-district-id="NSW_PW005" description="Sydney Olympic Park">
+      <period index="0" time-utc="2026-11-16T00:00:00+00:00" time-local="2026-11-16T11:00:00+11:00" wind-src="metar_10">
+        <level index="0" type="surface">
+          <element units="Celsius" type="apparent_temp">14.4</element>
+          <element units="Celsius" type="delta_t">1.6</element>
+          <element units="km/h" type="gust_kmh">33</element>
+          <element units="knots" type="wind_gust_spd">18</element>
+          <element units="Celsius" type="air_temperature">16.9</element>
+          <element units="Celsius" type="dew_point">14.0</element>
+          <element units="mm" type="rain_hour">0.0</element>
+          <element units="mm" type="rain_ten">0.0</element>
+          <element units="%" type="rel-humidity">83</element>
+          <element units="km" type="vis_km">10</element>
+          <element type="wind_dir">SE</element>
+          <element units="deg" type="wind_dir_deg">143</element>
+          <element units="km/h" type="wind_spd_kmh">20</element>
+          <element units="knots" type="wind_spd">11</element>
+          <element start-time-local="2026-11-16T09:00:00+11:00" end-time-local="2026-11-16T11:04:00+11:00" duration="124" start-time-utc="2026-11-15T22:00:00+00:00" end-time-utc="2026-11-16T00:04:00+00:00" units="mm" type="rainfall">0.0</element>
+          <element start-time-local="2026-11-15T09:00:00+11:00" end-time-local="2026-11-16T09:00:00+11:00" duration="1440" start-time-utc="2026-11-14T22:00:00+00:00" end-time-utc="2026-11-15T22:00:00+00:00" units="mm" type="rainfall_24hr">0.0</element>
+          <element start-time-local="2026-11-16T06:00:00+11:00" end-time-local="2026-11-16T21:00:00+11:00" start-time-utc="2026-11-15T19:00:00+00:00" end-time-utc="2026-11-16T10:00:00+00:00" units="Celsius" type="maximum_air_temperature" instance="running" time-utc="2026-11-15T23:49:00+00:00" time-local="2026-11-16T10:49:00+11:00">18.3</element>
+          <element start-time-local="2026-11-15T18:00:00+11:00" end-time-local="2026-11-16T09:00:00+11:00" start-time-utc="2026-11-15T07:00:00+00:00" end-time-utc="2026-11-15T22:00:00+00:00" units="Celsius" type="minimum_air_temperature" instance="running" time-utc="2026-11-15T20:50:00+00:00" time-local="2026-11-16T07:50:00+11:00">15.2</element>
+          <element start-time-local="2026-11-16T00:00:00+11:00" end-time-local="2026-11-17T00:00:00+11:00" start-time-utc="2026-11-15T13:00:00+00:00" end-time-utc="2026-11-16T13:00:00+00:00" units="knots" type="maximum_gust_spd" instance="running" time-utc="2026-11-15T23:55:00+00:00" time-local="2026-11-16T10:55:00+11:00">18</element>
+          <element start-time-local="2026-11-16T00:00:00+11:00" end-time-local="2026-11-17T00:00:00+11:00" start-time-utc="2026-11-15T13:00:00+00:00" end-time-utc="2026-11-16T13:00:00+00:00" units="km/h" type="maximum_gust_kmh" instance="running" time-utc="2026-11-15T23:55:00+00:00" time-local="2026-11-16T10:55:00+11:00">33</element>
+          <element start-time-local="2026-11-16T00:00:00+11:00" end-time-local="2026-11-17T00:00:00+11:00" start-time-utc="2026-11-15T13:00:00+00:00" end-time-utc="2026-11-16T13:00:00+00:00" type="maximum_gust_dir" instance="running" time-utc="2026-11-15T23:55:00+00:00" time-local="2026-11-16T10:55:00+11:00">SE</element>
+        </level>
+      </period>
+    </station>
+    <station wmo-id="94765" bom-id="066137" tz="Australia/Sydney" stn-name="BANKSTOWN AIRPORT AWS" stn-height="7.20" type="AWS" lat="-33.9176" lon="150.9837" forecast-district-id="NSW_PW005" description="Bankstown">
+      <period index="0" time-utc="2026-11-16T00:00:00+00:00" time-local="2026-11-16T11:00:00+11:00" wind-src="metar_10">
+        <level index="0" type="surface">
+          <element units="Celsius" type="apparent_temp">14.8</element>
+          <element type="cloud">Partly cloudy</element>
+          <element units="m" type="cloud_base_m">720</element>
+          <element type="cloud_oktas">5</element>
+          <element units="Celsius" type="delta_t">3.2</element>
+          <element units="km/h" type="gust_kmh">35</element>
+          <element units="knots" type="wind_gust_spd">19</element>
+          <element units="Celsius" type="air_temperature">18.2</element>
+          <element units="Celsius" type="dew_point">12.4</element>
+          <element units="hPa" type="pres">1016.1</element>
+          <element units="hPa" type="msl_pres">1016.1</element>
+          <element units="hPa" type="qnh_pres">1016.1</element>
+          <element units="mm" type="rain_hour">0.0</element>
+          <element units="mm" type="rain_ten">0.0</element>
+          <element units="%" type="rel-humidity">69</element>
+          <element units="km" type="vis_km">10</element>
+          <element type="wind_dir">SSE</element>
+          <element units="deg" type="wind_dir_deg">161</element>
+          <element units="km/h" type="wind_spd_kmh">22</element>
+          <element units="knots" type="wind_spd">12</element>
+          <element start-time-local="2026-11-16T09:00:00+11:00" end-time-local="2026-11-16T11:04:00+11:00" duration="124" start-time-utc="2026-11-15T22:00:00+00:00" end-time-utc="2026-11-16T00:04:00+00:00" units="mm" type="rainfall">0.0</element>
+          <element start-time-local="2026-11-15T09:00:00+11:00" end-time-local="2026-11-16T09:00:00+11:00" duration="1440" start-time-utc="2026-11-14T22:00:00+00:00" end-time-utc="2026-11-15T22:00:00+00:00" units="mm" type="rainfall_24hr">4.0</element>
+          <element start-time-local="2026-11-16T06:00:00+11:00" end-time-local="2026-11-16T21:00:00+11:00" start-time-utc="2026-11-15T19:00:00+00:00" end-time-utc="2026-11-16T10:00:00+00:00" units="Celsius" type="maximum_air_temperature" instance="running" time-utc="2026-11-15T23:39:00+00:00" time-local="2026-11-16T10:39:00+11:00">19.1</element>
+          <element start-time-local="2026-11-15T18:00:00+11:00" end-time-local="2026-11-16T09:00:00+11:00" start-time-utc="2026-11-15T07:00:00+00:00" end-time-utc="2026-11-15T22:00:00+00:00" units="Celsius" type="minimum_air_temperature" instance="running" time-utc="2026-11-15T18:42:00+00:00" time-local="2026-11-16T05:42:00+11:00">15.4</element>
+          <element start-time-local="2026-11-16T00:00:00+11:00" end-time-local="2026-11-17T00:00:00+11:00" start-time-utc="2026-11-15T13:00:00+00:00" end-time-utc="2026-11-16T13:00:00+00:00" units="knots" type="maximum_gust_spd" instance="running" time-utc="2026-11-16T00:00:00+00:00" time-local="2026-11-16T11:00:00+11:00">19</element>
+          <element start-time-local="2026-11-16T00:00:00+11:00" end-time-local="2026-11-17T00:00:00+11:00" start-time-utc="2026-11-15T13:00:00+00:00" end-time-utc="2026-11-16T13:00:00+00:00" units="km/h" type="maximum_gust_kmh" instance="running" time-utc="2026-11-16T00:00:00+00:00" time-local="2026-11-16T11:00:00+11:00">35</element>
+          <element start-time-local="2026-11-16T00:00:00+11:00" end-time-local="2026-11-17T00:00:00+11:00" start-time-utc="2026-11-15T13:00:00+00:00" end-time-utc="2026-11-16T13:00:00+00:00" type="maximum_gust_dir" instance="running" time-utc="2026-11-16T00:00:00+00:00" time-local="2026-11-16T11:00:00+11:00">SE</element>
+        </level>
+      </period>
+    </station>
+  </observations>
+</product>
