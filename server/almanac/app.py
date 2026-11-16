@@ -22,7 +22,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 from zoneinfo import ZoneInfo
 
-from . import bom, conditions, facts, photos
+from . import bom, climate, conditions, facts, photos
 from . import schedule, weather
 from .config import Config
 from .palette import to_preview
@@ -403,6 +403,9 @@ def main():
             time.sleep(6 * 3600)
 
     threading.Thread(target=keep_pool_fresh, name="pool", daemon=True).start()
+    # Hourly climate normals for this location: a 30-year archive pull, the
+    # first time and yearly after; the placeholder answers until it is done.
+    climate.start_background_build(cfg)
     server = ThreadingHTTPServer(("0.0.0.0", cfg.port), make_handler(app))
     print(f"inky-almanac listening on :{cfg.port} for {cfg.place}", flush=True)
     server.serve_forever()

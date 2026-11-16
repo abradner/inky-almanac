@@ -111,7 +111,9 @@ poster.
 | `server/almanac/photos.py` | Commons photo pool, daily pick, colour screen |
 | `server/almanac/weather.py` | Open-Meteo forecast (hourly strip, wind, UV, sun times) |
 | `server/almanac/facts.py` | the coming hour's facts and their scores (pure) |
-| `server/almanac/normals.py` | what the weather usually does (placeholder table for now) |
+| `server/almanac/normals.py` | the `Normals` interface the fact scorer reads; defaults to `climate.NORMALS` |
+| `server/almanac/climate.py` | climate normals by month and hour, for saying "above normal" (see below) |
+| `server/almanac/data/uv_normals.json` | hourly UV normals for Sydney, built by `tools/build_uv_normals.py` |
 | `server/almanac/bom.py` | BOM town forecast (FTP product IDN11060), overlaid on Open-Meteo |
 | `server/almanac/hazards.py` | RFS incidents, SES (via HazardWatch) and BOM warnings near home |
 | `server/almanac/conditions.py` | fire danger and fire ban, air quality, feed caching and staleness |
@@ -121,6 +123,7 @@ poster.
 | `frame/main.py` | boot guard; never updated over the air |
 | `frame/config.py` | `MODE` (`wifi`/`usb`) and `SERVER` |
 | `scripts/` | deploy the server, deploy the frame, sign OTA releases |
+| `tools/` | one-off data builds (the UV normals table) |
 
 ## Setup
 
@@ -208,6 +211,50 @@ The photo categories are `CATEGORIES` in `photos.py`. The pool refreshes every
 4. Add a badge in `render.badges_for`. Use the inks that mean something
    (`palette.py`), and keep the text free of numbers that drift. Every change
    to the picture costs a 40-second refresh.
+
+## Climate normals
+
+`climate.py` answers "what does this hour usually look like here?", for
+facts like "4° warmer than a normal November 3 pm". Every cell is a
+(month, hour) of local clock time, daylight saving included.
+
+```python
+from almanac.climate import NORMALS
+NORMALS.temp(11, 15)            # TempNormal(mean, std, p10, p50, p90)
+NORMALS.daily_max(1)            # normal daily maximum
+NORMALS.wind(9, 14)             # WindNormal(p50, p90, gust_p50, gust_p90, sectors)
+NORMALS.rain(2, 16)             # RainNormal(p_wet, wet_mean, wet_p90)
+NORMALS.uv(1, 13)               # UVNormal(mean, p90)
+NORMALS.southerly_rate(12, 17)  # chance of a southerly change in that hour
+NORMALS.temp_percentile(11, 15, 31.0)
+NORMALS.normal_max(month, hour=None), NORMALS.normal_uv(month, hour=None)  # the fact scorer's calls
+```
+
+- **Temperature, wind and rain** are computed at runtime from Open-Meteo's
+  ERA5 archive (`era5_seamless`, 1991-2020) at `ALMANAC_LAT`/`ALMANAC_LON`.
+  The renderer pulls 30 yearly chunks in the background on first start (about
+  2.5 minutes, 30 requests), writes `climate-normals.json` to the cache volume,
+  and rebuilds it once a year or when the location changes. Until then, or if
+  a build fails (it retries every 6 hours, resuming from the years it already
+  has), a rough central-Sydney placeholder answers. Nothing is committed,
+  because the location is private.
+- **Rain**: an hour is wet from 0.1 mm, because ERA5 drizzles far too often.
+  `p_wet` is the chance of a wet hour; `wet_mean` and `wet_p90` are over wet
+  hours only.
+- **Southerly changes** are a reanalysis proxy: the wind swings from N, NE,
+  NW or W to S, SE or SW between two consecutive hours and blows at least
+  20 km/h afterwards. A 25 km grid smooths real changes, which often take
+  more than an hour to swing or arrive between grid points, so this
+  under-counts them badly (about 0.2-0.9 a month at Observatory Hill) and
+  mistimes them. Treat it as relative, month against month.
+- **Daily max/min** are from hourly values, so they sit a little inside a
+  thermometer's true extremes.
+- **UV** is ARPANSA's measured 1-minute UV index for Sydney, 2007-2025,
+  averaged to hourly means (`uv(month, hour)`), plus each day's peak reading
+  (`uv_peak(month)`, which is what `normal_uv(month)` returns). It describes
+  a public site, so the table is committed; rebuild it with
+  `tools/build_uv_normals.py` (about 400 MB of downloads, cached under
+  `cache/`). UV observations courtesy of ARPANSA.
 
 ## Design choices worth knowing
 
@@ -335,6 +382,8 @@ docker rm -f inky-almanac; docker rmi inky-almanac:dev; docker volume rm inky-al
 
 Photos: Wikimedia Commons Featured Pictures, each under its own licence and
 credited on the poster. Weather: the Bureau of Meteorology's public forecast
-and warning products, and [Open-Meteo](https://open-meteo.com) (CC BY 4.0).
+and warning products, and [Open-Meteo](https://open-meteo.com) (CC BY 4.0), including its ERA5
+reanalysis archive for the climate normals. UV observations courtesy of
+ARPANSA (CC BY 2.5 AU).
 Hazards: NSW RFS, and NSW SES via HazardWatch. Badges summarise; read the full
 warning in Hazards Near Me or on the BOM website. Fonts: DejaVu.
