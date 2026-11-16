@@ -4,7 +4,10 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from almanac import bom, conditions, hazards as hz, weather
+from almanac import conditions, hazards as hz
+from almanac.domain import apply_outlook
+from almanac.providers import bom_precis as bom, bom_warnings, hazardwatch, rfs_incidents
+from almanac.providers import openmeteo as weather
 from almanac.config import Config
 from almanac.palette import BLACK, ORANGE, RED, WHITE, YELLOW
 from almanac.render import MAX_BADGES, badges_for
@@ -91,7 +94,7 @@ def test_inside_a_polygon_is_zero_km_and_outside_is_measured():
 
 
 def test_rfs_keeps_nearby_warnings_and_drops_the_rest():
-    got = hz.rfs_hazards(RFS, *HOME, radius_km=30)
+    got = rfs_incidents.rfs_hazards(RFS, *HOME, radius_km=30)
     assert [(h.kind, h.level, h.where) for h in got] == [("fire", "watch", "Lane Cove")]
     assert 4 <= got[0].km <= 7
 
@@ -107,13 +110,13 @@ def test_ses_alert_covering_home_counts_and_far_ones_do_not():
          {"geometry": square(144.35, -29.03), "properties": {"alertIdentifier": "a2"}},
          {"geometry": square(151.21, -33.87), "properties": {"alertIdentifier": "a3"}}],
     )
-    got = hz.ses_hazards(hz.hazardwatch_data(html), *HOME, radius_km=30)
+    got = hazardwatch.ses_hazards(hazardwatch.hazardwatch_data(html), *HOME, radius_km=30)
     assert [(h.kind, h.level, h.where, h.km) for h in got] == [("flood", "watch", "Cooks River at Tempe", 0)]
 
 
 def test_hazardwatch_page_without_data_raises():
     with pytest.raises(ValueError):
-        hz.hazardwatch_data("<html>maintenance</html>")
+        hazardwatch.hazardwatch_data("<html>maintenance</html>")
 
 
 # ------------------------------------------------------------------ BOM
@@ -121,7 +124,7 @@ def test_hazardwatch_page_without_data_raises():
 
 def test_bom_warnings_filtered_to_home_areas():
     c = Config()
-    got = hz.bom_hazards(BOM_RSS, c.bom_warning_areas, c.bom_warning_ignore)
+    got = bom_warnings.bom_hazards(BOM_RSS, c.bom_warning_areas, c.bom_warning_ignore)
     assert [(h.where, h.level, h.kind) for h in got] == [
         ("Severe Thunderstorm Warning", "watch", "storm"),
         ("Flood Watch", "advice", "flood"),
@@ -137,7 +140,7 @@ def test_bom_precis_parses_and_overlays_field_by_field():
         bom.parse(PRECIS, "Atlantis")
 
     om = weather.Day(date(2026, 11, 10), 3, 25.0, 11.0, 20, 0.0, 8.0, datetime(2026, 11, 10, 5, 48), datetime(2026, 11, 10, 19, 31), [])
-    bom.overlay(om, today)
+    apply_outlook(om, today)
     assert (om.t_max, om.t_min, om.label, om.icon, om.rain_prob, om.source) == (27, 11.0, "Sunny", "clear", 5, "BOM")
 
 
@@ -165,8 +168,8 @@ def test_bom_days_fall_back_to_nothing_when_unreachable(tmp_path):
     def down(url):
         raise OSError("ftp down")
 
-    assert conditions.load_bom_days(cfg(tmp_path), now=0, get_text=down) == {}
-    got = conditions.load_bom_days(cfg(tmp_path), now=0, get_text=lambda u: PRECIS)
+    assert bom.load_bom_days(cfg(tmp_path), now=0, get_text=down) == {}
+    got = bom.load_bom_days(cfg(tmp_path), now=0, get_text=lambda u: PRECIS)
     assert got[date(2026, 11, 11)].t_max == 29
 
 
@@ -177,7 +180,7 @@ def test_badge_order_colours_and_cap():
     hs = [
         hz.Hazard("fire", "advice", "Ku-Ring-Gai", 6, "RFS"),
         hz.Hazard("flood", "emergency", "Tempe", 0, "NSWSES"),
-        hz.Hazard("storm", "watch", "Severe Thunderstorm Warning", None, "BOM"),
+        hz.Hazard("storm", "watch", "Severe Thunderstorm Warning", None, "BOM", titled=True),
     ]
     b = badges_for(conditions.Conditions(fire_ban=True, hazards=hz.sort_and_dedupe(hs)))
     # specific hazards first, then broad notices such as the fire ban
@@ -218,7 +221,7 @@ def test_malformed_features_are_skipped_not_fatal():
         {"properties": {"title": "Z", "category": "Advice"}, "geometry": {"type": "Point", "coordinates": ["junk", "data"]}},
         RFS["features"][0],
     ]}
-    got = hz.rfs_hazards(bad, *HOME, radius_km=30)
+    got = rfs_incidents.rfs_hazards(bad, *HOME, radius_km=30)
     assert ("Lane Cove", "watch") in {(h.where, h.level) for h in got}
     assert ("Unnamed", "advice") in {(h.where, h.level) for h in got}
 
@@ -226,11 +229,11 @@ def test_malformed_features_are_skipped_not_fatal():
 def test_expired_ses_alerts_are_dropped():
     alert = ses_alert("e1", "Watch and Act", "Tempe")
     alert["info"]["expires"] = "2026-11-10T00:00:00Z"
-    data = hz.hazardwatch_data(hazardwatch_html([alert], [{"geometry": square(151.21, -33.87), "properties": {"alertIdentifier": "e1"}}]))
+    data = hazardwatch.hazardwatch_data(hazardwatch_html([alert], [{"geometry": square(151.21, -33.87), "properties": {"alertIdentifier": "e1"}}]))
     before = datetime(2026, 11, 9, 23, 0, tzinfo=ZoneInfo("UTC"))
     after = datetime(2026, 11, 10, 1, 0, tzinfo=ZoneInfo("UTC"))
-    assert len(hz.ses_hazards(data, *HOME, 30, now_utc=before)) == 1
-    assert hz.ses_hazards(data, *HOME, 30, now_utc=after) == []
+    assert len(hazardwatch.ses_hazards(data, *HOME, 30, now_utc=before)) == 1
+    assert hazardwatch.ses_hazards(data, *HOME, 30, now_utc=after) == []
 
 
 def test_hazard_data_older_than_90_min_counts_as_unavailable(tmp_path):
@@ -250,17 +253,17 @@ def test_hazard_data_older_than_90_min_counts_as_unavailable(tmp_path):
 
 
 def test_unavailable_sources_get_a_neutral_badge_and_bom_its_own_style():
-    b = badges_for(conditions.Conditions(unavailable=["SES"], hazards=[hz.Hazard("storm", "watch", "Severe Thunderstorm Warning", None, "BOM")]))
+    b = badges_for(conditions.Conditions(unavailable=["SES"], hazards=[hz.Hazard("storm", "watch", "Severe Thunderstorm Warning", None, "BOM", titled=True)]))
     assert b[0] == ("SEVERE THUNDERSTORM WARNING", WHITE, RED)
     assert b[1] == ("NO LIVE HAZARD DATA: SES", WHITE, BLACK)
 
 
 def test_bom_afternoon_issue_keeps_todays_first_seen_max_and_precis(tmp_path):
     c = cfg(tmp_path)
-    morning = conditions.load_bom_days(c, now=0, get_text=lambda u: PRECIS)
+    morning = bom.load_bom_days(c, now=0, get_text=lambda u: PRECIS)
     assert morning[date(2026, 11, 10)].t_max == 27
     afternoon = PRECIS.replace('<element type="air_temperature_maximum" units="Celsius">27</element>', "").replace("Sunny.", "Clear.")
-    later = conditions.load_bom_days(c, now=10**6, get_text=lambda u: afternoon)
+    later = bom.load_bom_days(c, now=10**6, get_text=lambda u: afternoon)
     assert later[date(2026, 11, 10)].t_max == 27 and later[date(2026, 11, 10)].precis == "Sunny"
 
 
@@ -268,7 +271,7 @@ def test_request_path_never_touches_the_network(tmp_path, monkeypatch):
     import urllib.request
 
     from almanac.app import Almanac
-    from almanac import photos
+    from almanac.providers import commons as photos
 
     calls = []
 

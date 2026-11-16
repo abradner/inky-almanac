@@ -1,10 +1,12 @@
-"""Landscape photo of the day from Wikimedia Commons' Featured Pictures.
+"""Photo adapter: landscape photo of the day from Wikimedia Commons' Featured
+Pictures, as domain.Photo.
 
 Featured Pictures are Commons' best-of: sharp, well-exposed, freely licensed.
 The pool is drawn from a handful of nature categories (mountains, glaciers,
-forests, lakes, ...). Each candidate is also screened for colour before use:
-the panel has seven muted inks, so misty, grey or night scenes come out as mud,
-while a saturated, contrasty alpine scene comes out well.
+forests, lakes, ...). Each candidate is also screened for colour before use
+(palette.colourful_enough): the panel has seven muted inks, so misty, grey or
+night scenes come out as mud, while a saturated, contrasty alpine scene comes
+out well.
 
 The day's pick is a stable hash of the date, so every render on one day shows
 the same photo; candidates that fail the screen are remembered and skipped.
@@ -23,9 +25,10 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from dataclasses import dataclass
+from PIL import Image
 
-from PIL import Image, ImageStat
+from ..domain import Photo
+from ..palette import colourful_enough
 
 API = "https://commons.wikimedia.org/w/api.php"
 POOL_TTL = 14 * 86400
@@ -53,14 +56,6 @@ CATEGORIES = [
     "Featured pictures of volcanoes",
     "Featured pictures of landscapes",
 ]
-
-
-@dataclass
-class Photo:
-    id: str
-    title: str
-    credit: str
-    image: Image.Image
 
 
 # ------------------------------------------------------------------ network
@@ -220,20 +215,6 @@ def order(pool, day, shuffle=0):
     return sorted(pool, key=rank)
 
 
-def colourful_enough(img):
-    """Screen out scenes the inks can't render: grey, misty, dark or flat.
-
-    Thresholds are on a 0-255 scale: mean saturation, mean brightness and the
-    spread of brightness (contrast).
-    """
-    small = img.copy()
-    small.thumbnail((200, 200))
-    h, s, v = small.convert("HSV").split()
-    sat = ImageStat.Stat(s).mean[0]
-    val = ImageStat.Stat(v)
-    return sat >= 70 and 70 <= val.mean[0] <= 215 and val.stddev[0] >= 40
-
-
 def _rejects_path(cfg):
     return cfg.cache_dir / "photo-rejects.json"
 
@@ -305,3 +286,18 @@ def photo_for(cfg, day, shuffle=0, fetcher=None, get=_get, screen=colourful_enou
             except Exception:
                 continue
     return None
+
+
+class CommonsPhotos:
+    """The PhotoProvider for Commons' Featured Pictures."""
+
+    name = "commons"
+
+    def __init__(self, cfg, get_text=None):
+        self.cfg = cfg  # Commons is fetched as bytes and JSON, not through get_text
+
+    def photo_for(self, day, shuffle=0):
+        return photo_for(self.cfg, day, shuffle)
+
+    def refresh_pool(self):
+        load_pool(self.cfg, refresh=True)

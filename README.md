@@ -33,6 +33,11 @@ credits the photographer and licence.
   how far out of the ordinary they are: hail and storms first, then heavy
   rain, rain since 9 am, a wind change, strong wind, UV above normal, and a
   high well off normal. A quiet hour says "nothing unusual".
+- **What has actually happened.** Rain since 9 am and in the last hour come
+  from a nearby BOM weather station's rain gauge (Horsley Park by default),
+  not a model. A southerly change seen at a coastal station but not yet at
+  home becomes a strong "Southerly change arriving" fact. The station is
+  named on the poster's credit line.
 - **An hourly strip** from 6 am to 9 pm, with a temperature line, rain-chance
   bars and a marker at the current hour. It takes whatever height is left.
 - Sunrise and sunset, day length, and the moon phase, drawn as it looks
@@ -108,19 +113,21 @@ poster.
 | `server/almanac/render.py` | poster layout and badges |
 | `server/almanac/dither.py` | Atkinson dithering, matching colours in CIELAB against measured ink colours |
 | `server/almanac/palette.py` | the seven inks: pen indices and real-world RGB |
-| `server/almanac/photos.py` | Commons photo pool, daily pick, colour screen |
-| `server/almanac/weather.py` | Open-Meteo forecast (hourly strip, wind, UV, sun times) |
+| `server/almanac/domain.py` | the plain data every provider produces: `Forecast`, `Day`, `Hour`, `DayOutlook`, `Reading`, `StationLogs`, `MapImage`, `FireDanger`, `AirQualityHour`, `Photo` |
+| `server/almanac/hazards.py` | the `Hazard` type, its ranking and identity, and distance from home |
 | `server/almanac/facts.py` | the coming hour's facts and their scores (pure) |
-| `server/almanac/normals.py` | what the weather usually does (placeholder table for now) |
-| `server/almanac/bom.py` | BOM town forecast (FTP product IDN11060), overlaid on Open-Meteo |
-| `server/almanac/hazards.py` | RFS incidents, SES (via HazardWatch) and BOM warnings near home |
-| `server/almanac/conditions.py` | fire danger and fire ban, air quality, feed caching and staleness |
+| `server/almanac/observed.py` | rain since 9 am and in the last hour, and southerly changes, from station logs (pure) |
+| `server/almanac/normals.py` | the `Normals` interface the fact scorer reads; defaults to the configured normals provider |
+| `server/almanac/conditions.py` | gathers fire danger, air quality, hazards and the warning map into one `Conditions` |
+| `server/almanac/providers/` | every external source, one adapter module each (see "Adding or swapping a provider") |
+| `server/almanac/data/uv_normals.json` | hourly UV normals for Sydney, built by `tools/build_uv_normals.py` |
 | `server/almanac/schedule.py` | when the frame wakes, and which day the poster describes |
 | `server/almanac/usbpush.py` | USB mode: the server drives a frame over the serial cable |
 | `frame/almanac_frame.py` | the frame app: WiFi, fetch, draw, sleep, buttons, OTA install |
 | `frame/main.py` | boot guard; never updated over the air |
 | `frame/config.py` | `MODE` (`wifi`/`usb`) and `SERVER` |
 | `scripts/` | deploy the server, deploy the frame, sign OTA releases |
+| `tools/` | one-off data builds (the UV normals table) |
 
 ## Setup
 
@@ -193,21 +200,146 @@ container). The defaults live in `server/almanac/config.py`.
 | `ALMANAC_BOM_AREAS`, `ALMANAC_BOM_IGNORE` | which BOM warning titles count (comma separated) |
 | `ALMANAC_FIRE_DISTRICT` | Greater Sydney Region (empty turns the fire badge off) |
 | `ALMANAC_USB_DEVICE` | empty (USB mode off) |
+| `ALMANAC_FORECAST`, `ALMANAC_OUTLOOK`, `ALMANAC_OBSERVATIONS` | openmeteo, bom, bom (which provider supplies each kind of data; `none` turns a kind off) |
+| `ALMANAC_HAZARDS` | rfs,hazardwatch,bom |
+| `ALMANAC_WARNING_MAPS`, `ALMANAC_FIRE_DANGER`, `ALMANAC_AIR_QUALITY`, `ALMANAC_PHOTOS`, `ALMANAC_NORMALS` | bom, rfs, openmeteo, commons, era5 (`placeholder` for a fixed table) |
+| `ALMANAC_OBS_STATION` | 94760 (Horsley Park AWS; a WMO id from BOM's state observations product) |
+| `ALMANAC_OBS_CROSSCHECK` | 95765,94765 (Sydney Olympic Park, Bankstown: stand in when the home station is silent) |
+| `ALMANAC_OBS_LEADING` | 95756,94767,94769,94768 (Kurnell, Sydney Airport, Fort Denison, Observatory Hill: where a southerly arrives first) |
+| `ALMANAC_OBS_PRODUCT` | IDN60920 (BOM's NSW 10-minute observations; other states have their own) |
 
-The photo categories are `CATEGORIES` in `photos.py`. The pool refreshes every
+The photo categories are `CATEGORIES` in `providers/commons.py`. The pool refreshes every
 14 days; to force a refresh, delete `photo-pool.json` from the cache volume.
 
-## Adding a data source or a badge
+## Adding or swapping a provider
 
-1. Fetch it through `conditions._cached(...)`. Give it a `check=` that
-   rejects junk, so a bad response never replaces a good cache, and a
-   `stale_after=` that suits how fast it changes.
-2. Have `refresh_feeds()` in `app.py` fetch it. Requests never touch the
-   network; they read the caches only.
-3. Parse each item on its own, so one bad item can't hide the rest.
-4. Add a badge in `render.badges_for`. Use the inks that mean something
-   (`palette.py`), and keep the text free of numbers that drift. Every change
-   to the picture costs a 40-second refresh.
+Every external source sits behind an adapter in `server/almanac/providers/`,
+one module per source. The scorer, the layout and the scheduler only ever see
+plain domain data (`domain.py`, `hazards.Hazard`), so a fork for another
+state or country replaces adapters and leaves the rest alone.
+
+| Kind | Interface (`providers/base.py`) | Shipped adapters | Setting |
+|---|---|---|---|
+| forecast | `ForecastProvider.forecast()` → `Forecast` | `openmeteo` | `ALMANAC_FORECAST` |
+| official daily outlook | `OutlookProvider.outlook()` → `{date: DayOutlook}` | `bom` (IDN11060 town forecasts) | `ALMANAC_OUTLOOK` |
+| station observations | `ObservationsProvider.refresh()`, `.logs()` → `StationLogs` | `bom` (state 10-minute observations) | `ALMANAC_OBSERVATIONS` |
+| hazards | `HazardProvider.hazards()` → `[Hazard]` or None | `rfs`, `hazardwatch`, `bom` | `ALMANAC_HAZARDS` (several) |
+| warning maps | `WarningMapProvider.warning_map()` → `MapImage` | `bom` | `ALMANAC_WARNING_MAPS` |
+| fire danger | `FireDangerProvider.fire_danger()` → `FireDanger` | `rfs` | `ALMANAC_FIRE_DANGER` |
+| air quality | `AirQualityProvider.air_quality()` → `[AirQualityHour]` | `openmeteo` | `ALMANAC_AIR_QUALITY` |
+| photos | `PhotoProvider.photo_for()` → `Photo` | `commons` | `ALMANAC_PHOTOS` |
+| climate normals | `normals.Normals` (`normal_max`, `normal_uv`) | `era5` (+ ARPANSA UV), `placeholder` | `ALMANAC_NORMALS` |
+
+Sun and moon are not providers: sunrise and sunset arrive with the forecast,
+and the moon phase is computed locally (`astro.py`).
+
+To add one:
+
+1. Write `providers/<source>.py` with a class constructed as
+   `Adapter(cfg, get_text=None)` that satisfies the interface. Turn the
+   source's format into domain types there and nowhere else: units as
+   `domain.py` says (°C, km/h, mm, degrees the wind blows from), weather as
+   WMO codes, a short `source` credit for the poster.
+2. Fetch through `get_text(url)` and `providers.cache.cached(...)`. Give it a
+   `check=` that rejects junk, so a bad response never replaces a good cache,
+   and a `stale_after=` that suits how fast the source changes. On the
+   request path `get_text` is `cache.offline`, so requests only ever read
+   caches; the background refresher in `app.py` does the fetching.
+3. Parse each item on its own, so one bad item can't hide the rest, and
+   return None or empty rather than raise when the source is down.
+4. Register it in `REGISTRY` in `providers/__init__.py` and select it with
+   the setting. Test it against a recorded fixture: no network in tests.
+
+`tests/test_boundaries.py` fails if a module outside `providers/` imports a
+concrete adapter (only `app.py` composes, through the registry), or carries a
+provider's name or field names in its code.
+
+Known coupling left: the warning map's ink table (`dither.map_ink`) is tuned
+to BOM's map colours; a map provider with a different palette would want its
+own table or to deliver ink-ready images.
+
+To add a badge, add it in `render.badges_for`. Use the inks that mean
+something (`palette.py`), and keep the text free of numbers that drift. Every
+change to the picture costs a 40-second refresh.
+
+## Station observations
+
+The `bom` observations adapter reads BOM's state 10-minute observations
+product over anonymous FTP (`ftp://ftp.bom.gov.au/anon/gen/fwo/IDN60920.xml`
+for NSW: every station, latest observation only, about 540 KB). It fetches
+at most every 10 minutes, the product's own cadence, backs off (20 minutes,
+doubling, at most an hour) when the fetch fails, and keeps a three-hour
+rolling log of the configured stations in the cache volume
+(`bom-obs-log.json`). Requests read the log only, so rendering never waits
+for FTP. Elements are read by their `type` attribute; any of them may be
+missing (Fort Denison and Kurnell report wind only).
+
+`observed.py` turns the log into facts, with named constants for every rule:
+
+- A reading older than 30 minutes counts as missing, and the facts fall back
+  to the forecast's modelled rain. When the home station is silent, the first
+  cross-check station with a fresh reading stands in.
+- **Since 9 am** is the gauge's own figure. **Last hour** differences two
+  cumulative readings an hour apart (within 10 minutes); across the 9 am reset
+  it adds what fell before 9 from the previous period's closing total. A gap
+  in the log makes it unknown rather than guessed.
+- **A southerly change** at a station: the wind has swung into SE-S-SW (at
+  least 45°, at 10 km/h or more) within the last hour, and the temperature
+  fell 2° or more or the gust rose 15 km/h or more. A swing alone doesn't
+  count. Seen at a leading (coastal) station but not at home, it is a strong
+  "Southerly change arriving" fact (score 80, re-checked every 15 minutes),
+  and it replaces a forecast southerly change; seen at home it is "Southerly
+  change: arrived".
+
+BOM's anonymous FTP products are for personal, non-commercial use (see BOM's
+copyright notice). The renderer doesn't use `api.weather.bom.gov.au` (its
+responses forbid reuse) and doesn't scrape bom.gov.au pages. Station IDs are
+WMO numbers; find others in the product itself (`<station wmo-id=…
+description=…>`).
+
+## Climate normals
+
+`providers/climate.py` answers "what does this hour usually look like here?", for
+facts like "4° warmer than a normal November 3 pm". Every cell is a
+(month, hour) of local clock time, daylight saving included.
+
+```python
+from almanac.providers.climate import NORMALS
+NORMALS.temp(11, 15)            # TempNormal(mean, std, p10, p50, p90)
+NORMALS.daily_max(1)            # normal daily maximum
+NORMALS.wind(9, 14)             # WindNormal(p50, p90, gust_p50, gust_p90, sectors)
+NORMALS.rain(2, 16)             # RainNormal(p_wet, wet_mean, wet_p90)
+NORMALS.uv(1, 13)               # UVNormal(mean, p90)
+NORMALS.southerly_rate(12, 17)  # chance of a southerly change in that hour
+NORMALS.temp_percentile(11, 15, 31.0)
+NORMALS.normal_max(month, hour=None), NORMALS.normal_uv(month, hour=None)  # the fact scorer's calls
+```
+
+- **Temperature, wind and rain** are computed at runtime from Open-Meteo's
+  ERA5 archive (`era5_seamless`, 1991-2020) at `ALMANAC_LAT`/`ALMANAC_LON`.
+  The renderer pulls 30 yearly chunks in the background on first start (about
+  2.5 minutes, 30 requests), writes `climate-normals.json` to the cache volume,
+  and rebuilds it once a year or when the location changes. Until then, or if
+  a build fails (it retries every 6 hours, resuming from the years it already
+  has), a rough central-Sydney placeholder answers. Nothing is committed,
+  because the location is private.
+- **Rain**: an hour is wet from 0.1 mm, because ERA5 drizzles far too often.
+  `p_wet` is the chance of a wet hour; `wet_mean` and `wet_p90` are over wet
+  hours only.
+- **Southerly changes** are a reanalysis proxy: the wind swings from N, NE,
+  NW or W to S, SE or SW between two consecutive hours and blows at least
+  20 km/h afterwards. A 25 km grid smooths real changes, which often take
+  more than an hour to swing or arrive between grid points, so this
+  under-counts them badly (about 0.2-0.9 a month at Observatory Hill) and
+  mistimes them. Treat it as relative, month against month.
+- **Daily max/min** are from hourly values, so they sit a little inside a
+  thermometer's true extremes.
+- **UV** is ARPANSA's measured 1-minute UV index for Sydney, 2007-2025,
+  averaged to hourly means (`uv(month, hour)`), plus each day's peak reading
+  (`uv_peak(month)`, which is what `normal_uv(month)` returns). It describes
+  a public site, so the table is committed; rebuild it with
+  `tools/build_uv_normals.py` (about 400 MB of downloads, cached under
+  `cache/`). UV observations courtesy of ARPANSA.
 
 ## Design choices worth knowing
 
@@ -329,13 +461,17 @@ docker rm -f inky-almanac; docker rmi inky-almanac:dev; docker volume rm inky-al
   you to email its warnings team: warnings.capability@ses.nsw.gov.au.
 - Battery operation (power-off between refreshes, RTC wake) is written for
   but not yet proven on this board; it has run on USB.
-- Keep the poster and the status page private. BOM's data is licensed for
-  personal use, and SES wants its warnings republished in full.
+- Keep the poster and the status page private. BOM's data, including the
+  anonymous FTP observations, is licensed for personal, non-commercial use,
+  and SES wants its warnings republished in full.
 
 ## Credits
 
 Photos: Wikimedia Commons Featured Pictures, each under its own licence and
-credited on the poster. Weather: the Bureau of Meteorology's public forecast
-and warning products, and [Open-Meteo](https://open-meteo.com) (CC BY 4.0).
+credited on the poster. Weather: the Bureau of Meteorology's public forecast,
+warning and station observation products (the observing station, Horsley
+Park AWS by default, is named on the poster), and [Open-Meteo](https://open-meteo.com) (CC BY 4.0), including its ERA5
+reanalysis archive for the climate normals. UV observations courtesy of
+ARPANSA (CC BY 2.5 AU).
 Hazards: NSW RFS, and NSW SES via HazardWatch. Badges summarise; read the full
 warning in Hazards Near Me or on the BOM website. Fonts: DejaVu.

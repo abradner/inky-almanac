@@ -11,7 +11,10 @@ from zoneinfo import ZoneInfo
 import pytest
 from PIL import Image
 
-from almanac import conditions, hazards as hz, weather, photos
+from almanac import conditions, hazards as hz
+from almanac.domain import MapImage
+from almanac.providers import bom_warnings, hazardwatch, rfs_incidents
+from almanac.providers import commons as photos, openmeteo as weather
 from almanac.app import Almanac
 from almanac.config import Config
 from almanac.palette import BLUE, RED, WHITE
@@ -50,7 +53,7 @@ def cfg(tmp_path):
 
 def test_bom_warnings_are_classified_specific_or_broad():
     c = Config()
-    got = {h.where: h for h in hz.bom_hazards(RSS, c.bom_warning_areas, c.bom_warning_ignore)}
+    got = {h.where: h for h in bom_warnings.bom_hazards(RSS, c.bom_warning_areas, c.bom_warning_ignore)}
     assert got["Detailed Severe Thunderstorm Warning"].specific
     assert got["Severe Thunderstorm Warning"].specific
     assert not got["Flood Watch"].specific
@@ -59,22 +62,22 @@ def test_bom_warnings_are_classified_specific_or_broad():
 
 def test_alert_id_tracks_specific_hazards_only():
     c = Config()
-    hs = hz.bom_hazards(RSS, c.bom_warning_areas, c.bom_warning_ignore)
+    hs = bom_warnings.bom_hazards(RSS, c.bom_warning_areas, c.bom_warning_ignore)
     a = hz.alert_id(hs)
     assert a and a == hz.alert_id(list(reversed(hs)))  # order doesn't matter
     reissued = RSS.replace("13/17:13 EDT Detailed", "13/17:43 EDT Detailed")
-    assert hz.alert_id(hz.bom_hazards(reissued, c.bom_warning_areas, c.bom_warning_ignore)) != a
+    assert hz.alert_id(bom_warnings.bom_hazards(reissued, c.bom_warning_areas, c.bom_warning_ignore)) != a
     broad_only = [h for h in hs if not h.specific]
     assert hz.alert_id(broad_only) == ""
 
 
 def test_page_map_extracts_the_embedded_png_and_issue_time():
     png = map_png()
-    data, issued = hz.page_map(page(png))
+    data, issued = bom_warnings.page_map(page(png))
     assert data == png and issued == "5:13 pm"
-    assert hz.page_map("<p>Issued at 5:13 pm Friday.</p>")[0] is None
+    assert bom_warnings.page_map("<p>Issued at 5:13 pm Friday.</p>")[0] is None
     bogus = '<img src="data:image/png;base64,' + base64.b64encode(b"not a png").decode() + '">'
-    assert hz.page_map(bogus)[0] is None
+    assert bom_warnings.page_map(bogus)[0] is None
 
 
 def test_detailed_storm_warning_map_is_preferred_and_cached(tmp_path):
@@ -85,21 +88,21 @@ def test_detailed_storm_warning_map_is_preferred_and_cached(tmp_path):
         fetched.append(url)
         return page(map_png((255, 0, 0)) if "IDN21035" in url else map_png())
 
-    hs = list(reversed(hz.bom_hazards(RSS, c.bom_warning_areas, c.bom_warning_ignore)))  # detailed one last
-    w = conditions.load_warning_map(c, hs, 1000, get_text)
-    assert w["title"] == "Detailed Severe Thunderstorm Warning" and w["issued"] == "5:13 pm"
+    hs = list(reversed(bom_warnings.bom_hazards(RSS, c.bom_warning_areas, c.bom_warning_ignore)))  # detailed one last
+    w = bom_warnings.load_warning_map(c, hs, 1000, get_text)
+    assert w.title == "Detailed Severe Thunderstorm Warning" and w.issued == "5:13 pm"
     assert fetched == ["http://reg.bom.gov.au/products/IDN21035.shtml"]
 
     def offline(url):
         raise OSError("cache only")
 
-    again = conditions.load_warning_map(c, hs, 1050, offline)
-    assert again["png"] == w["png"]
+    again = bom_warnings.load_warning_map(c, hs, 1050, offline)
+    assert again.png == w.png
 
 
 def test_warning_map_replaces_the_photo_and_the_caption(tmp_path):
-    w = {"png": map_png(), "title": "Detailed Severe Thunderstorm Warning", "issued": "5:13 pm"}
-    hs = [hz.Hazard("storm", "watch", w["title"], None, "BOM", ident="a", url="x")]
+    w = MapImage(png=map_png(), title="Detailed Severe Thunderstorm Warning", issued="5:13 pm", credit="Map: Bureau of Meteorology")
+    hs = [hz.Hazard("storm", "watch", w.title, None, "BOM", ident="a", url="x", titled=True)]
     cond = conditions.Conditions(hazards=hs, alert="a", warning=w)
     now = datetime(2026, 11, 13, 17, 20, tzinfo=SYD)
     img = render(now=now, poster_day=now.date(), is_tomorrow=False, forecast=None,
@@ -111,8 +114,8 @@ def test_warning_map_replaces_the_photo_and_the_caption(tmp_path):
 
 
 def test_broad_notices_get_small_badges_after_specific_ones():
-    hs = [hz.Hazard("flood", "advice", "Flood Watch", None, "BOM", specific=False, ident="f"),
-          hz.Hazard("storm", "watch", "Severe Thunderstorm Warning", None, "BOM", ident="s")]
+    hs = [hz.Hazard("flood", "advice", "Flood Watch", None, "BOM", specific=False, ident="f", titled=True),
+          hz.Hazard("storm", "watch", "Severe Thunderstorm Warning", None, "BOM", ident="s", titled=True)]
     b = badges_for(conditions.Conditions(hazards=hs, fire_ban=True))
     texts = [x[0] for x in b]
     assert texts.index("SEVERE THUNDERSTORM WARNING") < texts.index("FLOOD WATCH")
@@ -136,14 +139,14 @@ def test_a_warning_mid_hour_makes_a_new_poster_and_alert(tmp_path):
     t = datetime(2026, 11, 13, 17, 5, tzinfo=SYD)
     quiet = app.frame_info(t)
     assert quiet["alert"] == "" and quiet["alert_poll_minutes"] >= 1
-    hs = [hz.Hazard("storm", "watch", "Severe Thunderstorm Warning", None, "BOM", ident="BOM:x")]
+    hs = [hz.Hazard("storm", "watch", "Severe Thunderstorm Warning", None, "BOM", ident="BOM:x", titled=True)]
     state["cond"] = conditions.Conditions(hazards=hs, alert=hz.alert_id(hs))
     stormy = app.frame_info(t.replace(minute=20))  # same hour slot
     assert stormy["alert"] == hz.alert_id(hs) and stormy["hash"] != quiet["hash"]
 
 
 def test_alert_endpoint_is_cheap_and_matches(tmp_path):
-    hs = [hz.Hazard("storm", "watch", "Severe Thunderstorm Warning", None, "BOM", ident="BOM:x")]
+    hs = [hz.Hazard("storm", "watch", "Severe Thunderstorm Warning", None, "BOM", ident="BOM:x", titled=True)]
     state = {"cond": conditions.Conditions(hazards=hs, alert=hz.alert_id(hs))}
     srv, base = _serve(_app(tmp_path, state))
     try:
@@ -174,12 +177,12 @@ def test_bom_map_colours_get_deliberate_inks(rgb, ink):
 
 def test_a_corrupt_map_is_never_cached_and_never_breaks_the_poster(tmp_path):
     truncated = map_png()[:60]
-    assert hz.page_map(page(truncated))[0] is None
+    assert bom_warnings.page_map(page(truncated))[0] is None
     huge = Image.new("RGB", (3000, 2000), (255, 255, 255))
     buf = io.BytesIO(); huge.save(buf, "PNG")
-    assert hz.page_map(page(buf.getvalue()))[0] is None  # over the pixel cap
+    assert bom_warnings.page_map(page(buf.getvalue()))[0] is None  # over the pixel cap
     # and if a bad map reaches render anyway, the photo is shown instead
-    w = {"png": b"\x89PNG not really", "title": "Severe Thunderstorm Warning", "issued": ""}
+    w = MapImage(png=b"\x89PNG not really", title="Severe Thunderstorm Warning", issued="", credit="Map: Bureau of Meteorology")
     cond = conditions.Conditions(hazards=[], warning=w)
     now = datetime(2026, 11, 13, 17, 20, tzinfo=SYD)
     img = render(now=now, poster_day=now.date(), is_tomorrow=False, forecast=None,
@@ -191,33 +194,33 @@ def test_the_largest_embedded_image_is_the_map():
     tiny = Image.new("RGB", (4, 4), (0, 0, 255)); b = io.BytesIO(); tiny.save(b, "PNG")
     html = (f"<img src='data:image/png;base64,{base64.b64encode(b.getvalue()).decode()}'>"
             + page(map_png()))
-    assert hz.page_map(html)[0] == map_png()
+    assert bom_warnings.page_map(html)[0] == map_png()
 
 
 def test_map_cache_is_per_issue_so_an_old_track_never_shows(tmp_path):
     c = cfg(tmp_path)
-    first = [hz.Hazard("storm", "watch", "Detailed Severe Thunderstorm Warning", None, "BOM", ident="BOM:17:13", url="http://x/IDN21035.shtml")]
-    conditions.load_warning_map(c, first, 1000, lambda u: page(map_png((255, 0, 0))))
-    reissue = [hz.Hazard("storm", "watch", "Detailed Severe Thunderstorm Warning", None, "BOM", ident="BOM:17:43", url="http://x/IDN21035.shtml")]
+    first = [hz.Hazard("storm", "watch", "Detailed Severe Thunderstorm Warning", None, "BOM", ident="BOM:17:13", url="http://x/IDN21035.shtml", titled=True)]
+    bom_warnings.load_warning_map(c, first, 1000, lambda u: page(map_png((255, 0, 0))))
+    reissue = [hz.Hazard("storm", "watch", "Detailed Severe Thunderstorm Warning", None, "BOM", ident="BOM:17:43", url="http://x/IDN21035.shtml", titled=True)]
 
     def down(url):
         raise OSError("page fetch failed")
 
-    assert conditions.load_warning_map(c, reissue, 1100, down) is None  # not the 17:13 map
+    assert bom_warnings.load_warning_map(c, reissue, 1100, down) is None  # not the 17:13 map
 
 
 def test_specific_hazards_beat_broad_badges_over_a_map():
     hs = [hz.Hazard("fire", "watch", "Lane Cove", 6, "RFS", ident="f"),
-          hz.Hazard("storm", "watch", "Detailed Severe Thunderstorm Warning", None, "BOM", ident="s", url="u")]
+          hz.Hazard("storm", "watch", "Detailed Severe Thunderstorm Warning", None, "BOM", ident="s", url="u", titled=True)]
     cond = conditions.Conditions(hazards=hs, fire_ban=True,
-                                 warning={"png": b"", "title": "Detailed Severe Thunderstorm Warning", "issued": ""})
+                                 warning=MapImage(png=b"", title="Detailed Severe Thunderstorm Warning", issued="", credit="Map: Bureau of Meteorology"))
     texts = [b[0] for b in badges_for(cond)]
     assert texts[0] == "FIRE · WATCH AND ACT · Lane Cove 6 km"
 
 
 def test_two_flood_warnings_for_different_rivers_both_survive():
-    a = hz.Hazard("flood", "watch", "Flood Warning", None, "BOM", ident="BOM:13/10:00 Flood Warning for the Hawkesbury River")
-    b = hz.Hazard("flood", "watch", "Flood Warning", None, "BOM", ident="BOM:13/10:05 Flood Warning for the Nepean River")
+    a = hz.Hazard("flood", "watch", "Flood Warning", None, "BOM", ident="BOM:13/10:00 Flood Warning for the Hawkesbury River", titled=True)
+    b = hz.Hazard("flood", "watch", "Flood Warning", None, "BOM", ident="BOM:13/10:05 Flood Warning for the Nepean River", titled=True)
     assert len(hz.sort_and_dedupe([a, b])) == 2
 
 
@@ -250,8 +253,8 @@ def test_weather_parse_reads_the_new_hourly_fields_and_tolerates_old_caches():
 def test_map_mode_widens_the_text_panel_and_lists_warnings(tmp_path):
     import almanac.render as R
 
-    w = {"png": map_png(), "title": "Severe Thunderstorm Warning", "area": "Sydney Metropolitan", "issued": "5:38 pm"}
-    hs = [hz.Hazard("storm", "watch", w["title"], None, "BOM", ident="a", url="x", detail="Sydney Metropolitan"),
+    w = MapImage(png=map_png(), title="Severe Thunderstorm Warning", area="Sydney Metropolitan", issued="5:38 pm", credit="Map: Bureau of Meteorology")
+    hs = [hz.Hazard("storm", "watch", w.title, None, "BOM", ident="a", url="x", detail="Sydney Metropolitan", titled=True),
           hz.Hazard("fire", "watch", "Lane Cove", 6, "RFS", ident="f")]
     cond = conditions.Conditions(hazards=hs, alert="a", warning=w, fire_ban=True)
     now = datetime(2026, 11, 13, 17, 41, tzinfo=SYD)
@@ -267,11 +270,11 @@ def test_map_mode_widens_the_text_panel_and_lists_warnings(tmp_path):
 
 def test_bom_area_is_carried_separately():
     c = Config()
-    got = {h.where: h.detail for h in hz.bom_hazards(RSS, c.bom_warning_areas, c.bom_warning_ignore)}
+    got = {h.where: h.detail for h in bom_warnings.bom_hazards(RSS, c.bom_warning_areas, c.bom_warning_ignore)}
     assert got["Detailed Severe Thunderstorm Warning"] == "Blue Mountains/Hawkesbury and Sydney"
     assert got["Severe Thunderstorm Warning"] == "Sydney Metropolitan"
     people = RSS.replace("Warning for Sydney Metropolitan", "Warning for people in Sydney Metropolitan")
-    got = {h.where: h.detail for h in hz.bom_hazards(people, c.bom_warning_areas, c.bom_warning_ignore)}
+    got = {h.where: h.detail for h in bom_warnings.bom_hazards(people, c.bom_warning_areas, c.bom_warning_ignore)}
     assert got["Severe Thunderstorm Warning"] == "Sydney Metropolitan"
 
 
@@ -292,19 +295,19 @@ def test_advice_level_rfs_and_ses_are_broad_notices():
     from test_hazards_bom import RFS, ses_alert, hazardwatch_html, square, HOME
 
     rfs = {"features": [dict(RFS["features"][0], properties={"title": "X, Lane Cove", "category": "Advice"})]}
-    assert not hz.rfs_hazards(rfs, *HOME, radius_km=30)[0].specific
+    assert not rfs_incidents.rfs_hazards(rfs, *HOME, radius_km=30)[0].specific
     watch = {"features": [dict(RFS["features"][0], properties={"title": "X, Lane Cove", "category": "Watch and Act"})]}
-    assert hz.rfs_hazards(watch, *HOME, radius_km=30)[0].specific
+    assert rfs_incidents.rfs_hazards(watch, *HOME, radius_km=30)[0].specific
     html = hazardwatch_html([ses_alert("s1", "Advice", "Sydney"), ses_alert("s2", "Watch and Act", "Tempe")],
                             [{"geometry": square(151.21, -33.87), "properties": {"alertIdentifier": i}} for i in ("s1", "s2")])
-    got = {h.where: h.specific for h in hz.ses_hazards(hz.hazardwatch_data(html), *HOME, 30)}
+    got = {h.where: h.specific for h in hazardwatch.ses_hazards(hazardwatch.hazardwatch_data(html), *HOME, 30)}
     assert got == {"Sydney": False, "Tempe": True}
-    advice_only = hz.ses_hazards(hz.hazardwatch_data(html.replace("Watch and Act", "Advice")), *HOME, 30)
+    advice_only = hazardwatch.ses_hazards(hazardwatch.hazardwatch_data(html.replace("Watch and Act", "Advice")), *HOME, 30)
     assert hz.alert_id(advice_only) == ""  # advice alone never triggers a fast refresh
 
 
 def test_a_cancellation_page_yields_no_map():
     png = map_png()
     html = "<h1>Cancellation of Severe Thunderstorm Warning</h1>" + page(png)
-    assert hz.page_map(html) == (None, None)
-    assert hz.page_map(page(png))[0] == png
+    assert bom_warnings.page_map(html) == (None, None)
+    assert bom_warnings.page_map(page(png))[0] == png

@@ -8,7 +8,8 @@ from datetime import date, datetime, timedelta
 import pytest
 
 import almanac.render as R
-from almanac import conditions, hazards as hz, photos, schedule, weather
+from almanac import conditions, hazards as hz, schedule
+from almanac.providers import commons as photos, openmeteo as weather
 from almanac.app import Almanac
 from almanac.config import Config
 from almanac.palette import BLACK, BLUE, RED, WHITE
@@ -581,7 +582,7 @@ def test_broken_facts_never_break_the_alert(tmp_path, monkeypatch):
         raise ValueError("bad data")
 
     monkeypatch.setattr(F, "coming_hour", boom)
-    hs = [hz.Hazard("storm", "watch", "Severe Thunderstorm Warning", None, "BOM", ident="BOM:x")]
+    hs = [hz.Hazard("storm", "watch", "Severe Thunderstorm Warning", None, "BOM", ident="BOM:x", titled=True)]
     state = {"s": preset("worstCold"), "cond": conditions.Conditions(hazards=hs, alert=hz.alert_id(hs))}
     assert app_for(tmp_path, state).alert(now_of(state["s"])) == hz.alert_id(hs)
 

@@ -12,10 +12,11 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageEnhance, ImageFont
 
-from . import astro, conditions as cond_mod, icons, weather
+from . import astro, conditions as cond_mod, icons
 from . import facts as facts_mod
 from .facts import coming_hour
 from .dither import atkinson, map_inks
+from .domain import describe
 from .palette import BLACK, BLUE, GREEN, INK_RGB, ORANGE, PNG_RGB, RED, WHITE, YELLOW, _flat, new_canvas, palette_image
 
 W, H = 800, 480
@@ -144,12 +145,12 @@ def draw_photo(canvas, photo):
 
 
 def draw_warning_map(canvas, warning):
-    """A BOM warning's threat-area map in place of the photo: fitted whole
+    """A warning's threat-area map (domain.MapImage) in place of the photo: fitted whole
     (it is a map, so no cropping), each of BOM's map colours given a fixed
     ink (dither.map_ink), no dithering, so labels and borders stay crisp."""
     import io
 
-    img = Image.open(io.BytesIO(warning["png"])).convert("RGB")
+    img = Image.open(io.BytesIO(warning.png)).convert("RGB")
     a = img.width / img.height
     w, h = (PHOTO_W, int(PHOTO_W / a)) if a > PHOTO_W / H else (int(H * a), H)
     img = img.resize((w, h), Image.LANCZOS)
@@ -280,7 +281,8 @@ CHART_MIN, CHART_MAX = 48, 130
 SUN_ROW_H = 32
 
 
-def draw_side(canvas, day_fc, *, now, poster_day, is_tomorrow, forecast, photo, cfg, warning=None, cond=None):
+def draw_side(canvas, day_fc, *, now, poster_day, is_tomorrow, forecast, photo, cfg, warning=None, cond=None,
+              observed=None):
     """The text panel, top to bottom: header (day, date, the day's icon and
     one max/min pair), the forecast text, the coming hour and its facts, the
     hourly chart (which takes whatever height is left), sun and moon, and the
@@ -294,7 +296,7 @@ def draw_side(canvas, day_fc, *, now, poster_day, is_tomorrow, forecast, photo, 
     d.section = "forecast"
     if day_fc is None:
         d.text((x, y + 4), "No forecast yet", font=CB(20), fill=RED)
-        d.text((x, y + 30), "Waiting for Open-Meteo…", font=C(15), fill=BLACK)
+        d.text((x, y + 30), "Waiting for the forecast…", font=C(15), fill=BLACK)
         y += 52
     else:
         y = _forecast_line(d, day_fc, x, y, is_tomorrow)
@@ -302,14 +304,15 @@ def draw_side(canvas, day_fc, *, now, poster_day, is_tomorrow, forecast, photo, 
     d.line([(x, y + 5), (x + SIDE_W, y + 5)], fill=BLACK, width=2)
     y += 13
 
-    coming = coming_hour(forecast, now, poster_day, is_tomorrow)
+    coming = coming_hour(forecast, now, poster_day, is_tomorrow, observed=observed)
     if coming is not None:
         y = _hero(d, coming, x, y)
         y = _facts_table(d, coming.facts[1:5], x, y + 4)
 
     # Bottom-up: the caption first, then the sun row above it; the chart gets
     # what is left between them and the facts, clamped to CHART_MIN..CHART_MAX.
-    lines = _caption_lines(d, photo, now=now, forecast=forecast, cfg=cfg, poster_day=poster_day, warning=warning, cond=cond)
+    lines = _caption_lines(d, photo, now=now, forecast=forecast, cfg=cfg, poster_day=poster_day, warning=warning, cond=cond,
+                           observed=observed)
     sun_h = SUN_ROW_H + 6 if day_fc is not None else 0
     chart_min = CHART_MIN + 8 if day_fc is not None else 0
     kept = _fit_caption(lines, y + chart_min + sun_h)
@@ -391,7 +394,7 @@ def _header(d, x, y, *, now, forecast, day_fc, is_tomorrow, cfg):
 
 
 def _forecast_line(d, fc, x, y, is_tomorrow):
-    """BOM's précis across the full width, two lines at most; from 6 pm it is
+    """The day's précis across the full width, two lines at most; from 6 pm it is
     tomorrow's, and says so."""
     prefix = "Tomorrow: " if is_tomorrow else ""
     indent = d.textlength(prefix, font=CB(14)) if prefix else 0
@@ -416,7 +419,7 @@ def _hour_label(h):
 
 
 def hour_icon(code):
-    return "hail" if code in facts_mod.HAIL else weather.describe(code)[1]
+    return "hail" if code in facts_mod.HAIL else describe(code)[1]
 
 
 HERO_ICON = 62
@@ -445,7 +448,7 @@ def _hero(d, coming, x, y):
         ink = top.ink
     else:
         vf = CB(16)
-        values, notes, ink = [weather.describe(hour.code)[0]], ["nothing unusual"], BLACK
+        values, notes, ink = [describe(hour.code)[0]], ["nothing unusual"], BLACK
     vh = vf.size + 3
     right_h = len(values) * vh + len(notes) * 14
     col_h = 13 + 4 + 37
@@ -643,17 +646,17 @@ def _sun_moon(d, fc, x, y, *, now, poster_day, cfg):
 # ---------------------------------------------------------------- caption
 
 
-def _caption_lines(d, photo, *, now, forecast, cfg, poster_day=None, warning=None, cond=None):
+def _caption_lines(d, photo, *, now, forecast, cfg, poster_day=None, warning=None, cond=None, observed=None):
     """(text, font, ink) lines for the picture's caption, the source stamp,
     and in map mode the list of warnings in force (instead of badges over the
     map)."""
     lines = []
     if warning:
-        for t in wrap(d, warning["title"], CB(15), SIDE_W, 2):
+        for t in wrap(d, warning.title, CB(15), SIDE_W, 2):
             lines.append((t, CB(15), RED))
-        for t in wrap(d, warning.get("area") or "", C(13), SIDE_W, 2):
+        for t in wrap(d, warning.area or "", C(13), SIDE_W, 2):
             lines.append((t, C(13), BLACK))
-        credit = ("Issued " + warning["issued"] + " · " if warning.get("issued") else "") + "Map: Bureau of Meteorology"
+        credit = ("Issued " + warning.issued + " · " if warning.issued else "") + warning.credit
         lines.append((fit_text(d, credit, C(12), SIDE_W), C(12), BLACK))
         for text, ink in warning_lines(cond, warning):
             for t in wrap(d, text, C(13), SIDE_W, 2):
@@ -665,8 +668,9 @@ def _caption_lines(d, photo, *, now, forecast, cfg, poster_day=None, warning=Non
     # No clock time here: it would change the picture (and force a 40 s
     # refresh) every hour even when nothing else did.
     day_fc = forecast.day(poster_day) if forecast else None
-    source = "BOM · Open-Meteo" if day_fc is not None and day_fc.source == "BOM" else "Open-Meteo"
-    stamp, colour = f"{cfg.place} · {source}", BLACK
+    source = day_fc.source if day_fc is not None and day_fc.source else (forecast.source if forecast else "")
+    station = observed.credit if observed is not None else ""  # whose gauge the rain figures come from
+    stamp, colour = " · ".join(p for p in (cfg.place, source, station) if p), BLACK
     if forecast is not None:
         age_h = (now.timestamp() - forecast.fetched_at) / 3600
         if age_h >= 3:
@@ -674,7 +678,7 @@ def _caption_lines(d, photo, *, now, forecast, cfg, poster_day=None, warning=Non
             # refresh every hour of an outage.
             age = "a day" if age_h >= 24 else "12 h" if age_h >= 12 else "3 h"
             stamp, colour = f"{cfg.place} · forecast over {age} old", RED
-    lines.append((stamp, C(11), colour))
+    lines.append((fit_text(d, stamp, C(11), SIDE_W), C(11), colour))
     return lines
 
 
@@ -701,7 +705,7 @@ _LEVEL_WORDS = {"emergency": "emergency warning", "watch": "watch and act", "adv
 
 def list_text(h):
     """Sentence-case line for the text panel: "Storm advice: Western Sydney"."""
-    if h.source == "BOM":
+    if h.titled:
         return h.where + (f": {h.detail}" if h.detail else "")
     where = h.where if h.km in (None, 0) else f"{h.where} ({h.km:.0f} km)"
     return f"{h.kind.capitalize()} {_LEVEL_WORDS[h.level]}: {where}"
@@ -714,7 +718,7 @@ def warning_lines(cond, warning):
         return []
     out = []
     for h in cond.hazards or []:
-        if h.specific and h.where != warning["title"]:
+        if h.specific and h.where != warning.title:
             out.append(("• " + list_text(h), RED if h.level == "emergency" else BLACK))
     broad = [list_text(h) for h in (cond.hazards or []) if not h.specific]
     if cond.fire_ban:
@@ -744,7 +748,7 @@ MAX_BADGES = 4
 
 
 def hazard_text(h):
-    if h.source == "BOM":
+    if h.titled:
         return h.where.upper()  # e.g. "SEVERE THUNDERSTORM WARNING"
     where = h.where if h.km in (None, 0) else f"{h.where} {h.km:.0f} km"
     return f"{h.kind.upper()} · {_AWS_WORDS[h.level]} · {where}"
@@ -772,13 +776,13 @@ def badges_for(cond):
     if cond is None:
         return out
     hazards = list(cond.hazards or [])
-    shown = cond.warning["title"] if getattr(cond, "warning", None) else None
+    shown = cond.warning.title if getattr(cond, "warning", None) else None
     for h in [h for h in hazards if h.level == "emergency"]:
         out.append(_badge(hazard_text(h), *_AWS["emergency"]))
     # Specific hazards before every broad notice, so a fire ban can never push
     # a nearby fire out of the (short, over a map) list.
     for h in [h for h in hazards if h.level != "emergency" and h.specific]:
-        if h.source == "BOM":  # the warning system's colours don't apply to BOM warnings
+        if h.titled:  # the warning system's colours don't apply to titled warnings
             if h.where != shown:  # the map and caption already say this one
                 out.append(_badge(hazard_text(h), WHITE, RED))
         else:
@@ -821,7 +825,7 @@ def draw_badges(canvas, cond, x=12, y=12):
         y += h + (6 if badge.small else 10)
 
 
-def render(*, now, poster_day, is_tomorrow, forecast, photo, cfg, cond=None, layout=None):
+def render(*, now, poster_day, is_tomorrow, forecast, photo, cfg, cond=None, layout=None, observed=None):
     """The poster. Pass a dict as `layout` to get back what draw_side used
     (section boxes, the caption's top, the facts)."""
     canvas = new_canvas((W, H), WHITE)
@@ -840,7 +844,7 @@ def render(*, now, poster_day, is_tomorrow, forecast, photo, cfg, cond=None, lay
         draw_badges(canvas, cond)  # over a map, warnings are listed in the text panel instead
     day_fc = forecast.day(poster_day) if forecast else None
     used = draw_side(canvas, day_fc, now=now, poster_day=poster_day, is_tomorrow=is_tomorrow, forecast=forecast, photo=photo, cfg=cfg,
-              warning=warning, cond=cond)
+              warning=warning, cond=cond, observed=observed)
     if layout is not None:
         layout.update(used, side=(SIDE_X, SIDE_W), photo_w=PHOTO_W)
     return canvas

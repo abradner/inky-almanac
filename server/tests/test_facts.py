@@ -5,7 +5,8 @@ from datetime import date, datetime
 
 import pytest
 
-from almanac import facts, normals, weather
+from almanac import facts, normals
+from almanac.providers import climate, openmeteo as weather
 from almanac.facts import Inputs, score
 from almanac.palette import BLACK, BLUE, ORANGE, RED
 from panel_fixtures import SYD, forecast, preset
@@ -294,9 +295,9 @@ def test_a_quiet_hour_has_no_facts():
     assert score(I(), N) == []
 
 
-def test_default_normals_are_the_placeholder_table():
-    assert normals.DEFAULT is normals.PLACEHOLDER
-    assert score(I(high=32, high_month=11)) == score(I(high=32, high_month=11), normals.PLACEHOLDER)
+def test_default_normals_are_the_climate_normals():
+    assert normals.DEFAULT is climate.NORMALS
+    assert score(I(high=32, high_month=11)) == score(I(high=32, high_month=11), climate.NORMALS)
     with pytest.raises(ValueError):
         normals.MonthlyNormals(max_temp=(1,) * 11, uv=(1,) * 12)
 

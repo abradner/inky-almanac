@@ -1,117 +1,21 @@
-"""Forecast from Open-Meteo (free, no key), cached on disk.
+"""Forecast adapter: Open-Meteo (free, no key), cached on disk.
 
-If Open-Meteo is unreachable the last good forecast is reused and the poster
-says how old it is, so a dead network never blanks the frame.
+Turns Open-Meteo's forecast JSON into domain.Forecast. If Open-Meteo is
+unreachable the last good forecast is reused and the poster says how old it
+is, so a dead network never blanks the frame.
 """
 
 import json
 import time
 import urllib.parse
 import urllib.request
-from dataclasses import dataclass
 from datetime import date, datetime
+
+from ..domain import Day, Forecast, Hour, describe, uv_label  # noqa: F401 (re-exported for tests)
 
 API = "https://api.open-meteo.com/v1/forecast"
 TTL_SECONDS = 20 * 60
-
-# WMO weather codes -> (short label, icon kind)
-_CODES = {
-    0: ("Clear", "clear"),
-    1: ("Mostly sunny", "clear"),
-    2: ("Partly cloudy", "partly"),
-    3: ("Cloudy", "cloudy"),
-    45: ("Fog", "fog"),
-    48: ("Fog", "fog"),
-    51: ("Light drizzle", "drizzle"),
-    53: ("Drizzle", "drizzle"),
-    55: ("Heavy drizzle", "drizzle"),
-    56: ("Freezing drizzle", "drizzle"),
-    57: ("Freezing drizzle", "drizzle"),
-    61: ("Light rain", "rain"),
-    63: ("Rain", "rain"),
-    65: ("Heavy rain", "rain"),
-    66: ("Freezing rain", "rain"),
-    67: ("Freezing rain", "rain"),
-    71: ("Light snow", "snow"),
-    73: ("Snow", "snow"),
-    75: ("Heavy snow", "snow"),
-    77: ("Snow grains", "snow"),
-    80: ("Showers", "showers"),
-    81: ("Showers", "showers"),
-    82: ("Heavy showers", "showers"),
-    85: ("Snow showers", "snow"),
-    86: ("Snow showers", "snow"),
-    95: ("Thunderstorms", "storm"),
-    96: ("Storms, hail", "storm"),
-    99: ("Storms, hail", "storm"),
-}
-
-
-def describe(code):
-    return _CODES.get(int(code), ("Unknown", "cloudy"))
-
-
-def uv_label(uv):
-    if uv < 3:
-        return "low"
-    if uv < 6:
-        return "moderate"
-    if uv < 8:
-        return "high"
-    if uv < 11:
-        return "very high"
-    return "extreme"
-
-
-@dataclass
-class Hour:
-    hour: int
-    temp: float
-    rain_prob: int
-    code: int
-    # For the next-hour line (older cached payloads may lack these).
-    rain_mm: float = 0.0  # precipitation over the preceding hour
-    wind: float = 0.0  # km/h
-    gust: float = 0.0  # km/h
-    uv: float = 0.0
-    wind_dir: float = None  # degrees the wind blows from; None if unknown
-
-
-@dataclass
-class Day:
-    day: date
-    code: int
-    t_max: float
-    t_min: float
-    rain_prob: int
-    rain_mm: float
-    uv: float
-    sunrise: datetime
-    sunset: datetime
-    hours: list
-    # Set when BOM's official town forecast is overlaid (bom.overlay).
-    label_override: str = None
-    icon_override: str = None
-    rain_text: str = None
-    source: str = "Open-Meteo"
-
-    @property
-    def label(self):
-        return self.label_override or describe(self.code)[0]
-
-    @property
-    def icon(self):
-        return self.icon_override or describe(self.code)[1]
-
-
-@dataclass
-class Forecast:
-    days: dict
-    current_temp: float
-    fetched_at: float  # unix seconds
-
-    def day(self, d):
-        return self.days.get(d)
+SOURCE = "Open-Meteo"
 
 
 def _num(v, default=0.0):
@@ -156,9 +60,10 @@ def parse(payload, fetched_at):
             sunrise=datetime.fromisoformat(daily["sunrise"][i]),
             sunset=datetime.fromisoformat(daily["sunset"][i]),
             hours=by_day.get(dd, []),
+            source=SOURCE,
         )
     current = payload.get("current", {}).get("temperature_2m")
-    return Forecast(days=days, current_temp=current, fetched_at=fetched_at)
+    return Forecast(days=days, current_temp=current, fetched_at=fetched_at, source=SOURCE)
 
 
 def _url(cfg):
@@ -169,7 +74,7 @@ def _url(cfg):
         "forecast_days": 4,
         # The hourly series starts at 00:00 today, so the hours already past
         # are there too (modelled, not observed): facts.py sums them for
-        # "since 9am".
+        # "since 9am" when no station observations are available.
         "current": "temperature_2m,weather_code",
         "hourly": "temperature_2m,precipitation_probability,weather_code,precipitation,wind_speed_10m,wind_gusts_10m,wind_direction_10m,uv_index",
         "daily": ",".join(
@@ -222,3 +127,19 @@ def load(cfg, now=None, fetch=None, ttl=TTL_SECONDS):
         if cached:
             return parse(cached["payload"], cached["fetched_at"])
         return None
+
+
+class OpenMeteoForecast:
+    """The ForecastProvider for Open-Meteo. `get_text(url)` is the transport
+    (providers.cache.offline on the request path: cache only)."""
+
+    name = "openmeteo"
+    ttl = TTL_SECONDS
+
+    def __init__(self, cfg, get_text=None):
+        self.cfg = cfg
+        self._get_text = get_text
+
+    def forecast(self, now=None, ttl=TTL_SECONDS):
+        fetch = None if self._get_text is None else (lambda url: json.loads(self._get_text(url)))
+        return load(self.cfg, now=now, fetch=fetch, ttl=ttl)

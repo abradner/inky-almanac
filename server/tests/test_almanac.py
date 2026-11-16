@@ -8,7 +8,9 @@ from zoneinfo import ZoneInfo
 import pytest
 from PIL import Image, ImageDraw
 
-from almanac import astro, conditions, photos, schedule, weather
+from almanac import astro, conditions, schedule
+from almanac.providers import cache, openmeteo_air, rfs_fire_danger
+from almanac.providers import commons as photos, openmeteo as weather
 from almanac.app import Almanac
 from almanac.config import Config
 from almanac.palette import INK_RGB, to_preview
@@ -417,16 +419,16 @@ def aq_payload(day=date(2026, 11, 10), peak_hour=15, peak=160):
 
 
 def test_parse_rfs_picks_the_district_and_day():
-    assert conditions.parse_rfs(RFS_XML, "Greater Sydney Region", tomorrow=False) == ("HIGH", False)
-    assert conditions.parse_rfs(RFS_XML, "greater sydney region ", tomorrow=True) == (None, True)
-    assert conditions.parse_rfs(RFS_XML, "Nowhere", tomorrow=False) == (None, False)
+    assert rfs_fire_danger.parse_rfs(RFS_XML, "Greater Sydney Region", tomorrow=False) == ("HIGH", False)
+    assert rfs_fire_danger.parse_rfs(RFS_XML, "greater sydney region ", tomorrow=True) == (None, True)
+    assert rfs_fire_danger.parse_rfs(RFS_XML, "Nowhere", tomorrow=False) == (None, False)
 
 
 def test_worst_daytime_aqi_ignores_night_and_other_days():
-    assert conditions.worst_daytime_aqi(aq_payload(), date(2026, 11, 10)) == 160
-    assert conditions.worst_daytime_aqi(aq_payload(), date(2026, 11, 11)) is None
+    assert conditions.worst_daytime_aqi(openmeteo_air.hours(aq_payload()), date(2026, 11, 10)) == 160
+    assert conditions.worst_daytime_aqi(openmeteo_air.hours(aq_payload()), date(2026, 11, 11)) is None
     p = aq_payload(peak_hour=23, peak=300)
-    assert conditions.worst_daytime_aqi(p, date(2026, 11, 10)) == 40
+    assert conditions.worst_daytime_aqi(openmeteo_air.hours(p), date(2026, 11, 10)) == 40
 
 
 def test_load_conditions_and_quiet_failure(tmp_path):
@@ -443,10 +445,10 @@ def test_load_conditions_and_quiet_failure(tmp_path):
         raise OSError("offline")
 
     # Within STALE_AFTER the cached data is used...
-    later = conditions.load(c, date(2026, 11, 10), False, now=t0 + conditions.TTL * 3, get_text=down)
+    later = conditions.load(c, date(2026, 11, 10), False, now=t0 + cache.TTL * 3, get_text=down)
     assert later.fire_rating == "HIGH"
     # ...after that a badge is better missing than wrong.
-    much_later = conditions.load(c, date(2026, 11, 10), False, now=t0 + conditions.STALE_AFTER + 1, get_text=down)
+    much_later = conditions.load(c, date(2026, 11, 10), False, now=t0 + cache.STALE_AFTER + 1, get_text=down)
     assert much_later.fire_rating is None and much_later.aqi is None
 
 
@@ -620,7 +622,7 @@ def test_a_conditions_crash_does_not_take_the_poster_down(tmp_path):
 
 def test_aqi_from_hour_ignores_smoke_that_has_cleared(tmp_path):
     p = aq_payload(peak_hour=8, peak=180)
-    assert conditions.worst_daytime_aqi(p, date(2026, 11, 10), 6, 22) == 180
+    assert conditions.worst_daytime_aqi(openmeteo_air.hours(p), date(2026, 11, 10), 6, 22) == 180
     c = cfg(tmp_path, fire_district="")
     t0 = datetime(2026, 11, 10, 14, 0, tzinfo=SYD).timestamp()
     get = lambda u: json.dumps(p)

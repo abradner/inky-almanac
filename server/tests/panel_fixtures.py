@@ -14,7 +14,9 @@ from zoneinfo import ZoneInfo
 
 from PIL import Image, ImageDraw
 
-from almanac import conditions, hazards as hz, photos, schedule, weather
+from almanac import conditions, hazards as hz, schedule
+from almanac.domain import MapImage
+from almanac.providers import commons as photos, openmeteo as weather
 
 SYD = ZoneInfo("Australia/Sydney")
 
@@ -47,6 +49,12 @@ PRESETS = {
     "night": {"hour": 21, "tMin": 16, "tMax": 30, "tMinT": 15, "tMaxT": 26, "cond": "cloudy", "rainP": 30, "rainMm": 0,
               "wind": 12, "gust": 20, "uv": 0, "dayCond": "showers", "since9": 0.4, "lastHr": 0,
               "precis": "Cloudy. Shower or two", "dayRain": 40, "mapMode": False, "hazard": "none"},
+    # A hot afternoon with a southerly change seen at the coast, not yet
+    # home, and a station's gauge for the rain so far (observed.Observed).
+    "southerly": {"hour": 15, "tMin": 21, "tMax": 38, "tMinT": 18, "tMaxT": 25, "cond": "partly", "rainP": 20,
+                  "rainMm": 0, "wind": 22, "gust": 35, "windFrom": 7, "windTo": 7, "uv": 9, "dayCond": "partly",
+                  "since9": 0, "lastHr": 0, "precis": "Hot. Gusty southerly change late afternoon", "dayRain": 30,
+                  "mapMode": False, "hazard": "none", "observed": "coast"},
 }
 
 WORST = ("worstPhoto", "worstMap", "worstCold")
@@ -136,9 +144,9 @@ def payload(s):
 
 def forecast(s):
     fc = weather.parse(payload(s), now_of(s).timestamp() - 600)
-    for day in fc.days.values():  # BOM's précis, as bom.overlay would set it
+    for day in fc.days.values():  # BOM's précis, as apply_outlook would set it
         day.label_override = s["precis"]
-        day.source = "BOM"
+        day.source = "BOM · Open-Meteo"
     if s["dayCond"] == "sunstorm":
         for day in fc.days.values():
             day.icon_override = "storm"
@@ -201,16 +209,16 @@ def conds(s):
     list: the mapped warning, two more specific hazards, broad notices, a fire
     ban and a feed outage, so the caption has to drop lines."""
     if s["mapMode"]:
-        w = {"png": map_png(), "title": "Severe Thunderstorm Warning", "area": "Sydney Metropolitan and Hawkesbury",
-             "issued": "5:38 pm"}
+        w = MapImage(png=map_png(), title="Severe Thunderstorm Warning", area="Sydney Metropolitan and Hawkesbury",
+             issued="5:38 pm", credit="Map: Bureau of Meteorology")
         hs = [
-            hz.Hazard("storm", "watch", w["title"], None, "BOM", ident="BOM:storm", detail=w["area"]),
+            hz.Hazard("storm", "watch", w.title, None, "BOM", ident="BOM:storm", detail=w.area, titled=True),
             hz.Hazard("fire", "emergency", "Lane Cove National Park", 6, "RFS", ident="RFS:1"),
             hz.Hazard("flood", "watch", "Cooks River at Canterbury", 0, "SES", ident="SES:1"),
             hz.Hazard("storm", "advice", "Western Sydney and Blue Mountains", None, "SES",
                       specific=False, ident="SES:2"),
             hz.Hazard("flood", "advice", "Flood Watch", None, "BOM", specific=False, ident="BOM:fw",
-                      detail="Hawkesbury-Nepean"),
+                      detail="Hawkesbury-Nepean", titled=True),
         ]
         return conditions.Conditions(hazards=hs, alert=hz.alert_id(hs), warning=w, fire_ban=True, unavailable=["SES"])
     if s["hazard"] == "ban":
@@ -219,6 +227,19 @@ def conds(s):
         hs = [hz.Hazard("fire", "watch", "Lane Cove", 6, "RFS", ident="RFS:1")]
         return conditions.Conditions(hazards=hs, alert=hz.alert_id(hs), fire_ban=True)
     return conditions.Conditions()
+
+
+def observations(s):
+    """observed.Observed for a preset that has them, else None."""
+    from almanac import observed
+
+    if not s.get("observed"):
+        return None
+    now = now_of(s)
+    change = observed.Southerly("Kurnell", now - timedelta(minutes=20), 315.0, 190.0, 7.5, 63.0)
+    return observed.Observed("Horsley Park", "Horsley Park AWS", now - timedelta(minutes=1), since9_mm=1.4,
+                             last_hr_mm=0.2, southerly_coast=change if s["observed"] == "coast" else None,
+                             southerly_here=change if s["observed"] == "here" else None, source="BOM")
 
 
 def render_preset(name, cfg, map_mode=None, layout=None):
@@ -230,7 +251,7 @@ def render_preset(name, cfg, map_mode=None, layout=None):
     day, is_tomorrow = schedule.poster_day(now, cfg.tomorrow_from_hour)
     layout = {} if layout is None else layout
     img = render(now=now, poster_day=day, is_tomorrow=is_tomorrow, forecast=forecast(s), photo=photo(s), cfg=cfg,
-                 cond=conds(s), layout=layout)
+                 cond=conds(s), layout=layout, observed=observations(s))
     return img, layout
 
 
@@ -239,4 +260,5 @@ CASES = [(n, m, f"{n}-{'map' if m else 'photo'}") for n in WORST for m in (False
     ("afternoon", False, "afternoon-photo"),
     ("morning", False, "morning-photo"),
     ("night", False, "evening-photo"),
+    ("southerly", False, "southerly-photo"),
 ]

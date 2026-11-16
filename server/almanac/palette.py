@@ -9,7 +9,7 @@ muted than pure RGB, and dithering against what the panel can really show gives
 far better pictures than dithering against #ff0000 and friends.
 """
 
-from PIL import Image
+from PIL import Image, ImageStat
 
 BLACK, WHITE, GREEN, BLUE, RED, YELLOW, ORANGE = range(7)
 
@@ -59,3 +59,17 @@ def to_preview(canvas):
     preview = canvas.copy()
     preview.putpalette(_flat(INK_RGB))
     return preview.convert("RGB")
+
+
+def colourful_enough(img):
+    """Screen out scenes the inks can't render: grey, misty, dark or flat.
+
+    Thresholds are on a 0-255 scale: mean saturation, mean brightness and the
+    spread of brightness (contrast).
+    """
+    small = img.copy()
+    small.thumbnail((200, 200))
+    h, s, v = small.convert("HSV").split()
+    sat = ImageStat.Stat(s).mean[0]
+    val = ImageStat.Stat(v)
+    return sat >= 70 and 70 <= val.mean[0] <= 215 and val.stddev[0] >= 40

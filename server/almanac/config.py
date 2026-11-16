@@ -9,6 +9,10 @@ def _env(name, default):
     return os.environ.get(name, default)
 
 
+def _list(name, default):
+    return tuple(a.strip() for a in _env(name, default).split(",") if a.strip())
+
+
 @dataclass(frozen=True)
 class Config:
     place: str = field(default_factory=lambda: _env("ALMANAC_PLACE", "Sydney"))
@@ -43,6 +47,27 @@ class Config:
             a.strip() for a in _env("ALMANAC_BOM_IGNORE", "Surf,Marine,Coastal Waters,Ocean,Sheep Graziers").split(",") if a.strip()
         )
     )
+    # Providers: which adapter supplies each kind of data ("none" turns a
+    # kind off). See almanac/providers/__init__.py for the registered names.
+    forecast_provider: str = field(default_factory=lambda: _env("ALMANAC_FORECAST", "openmeteo"))
+    outlook_provider: str = field(default_factory=lambda: _env("ALMANAC_OUTLOOK", "bom"))
+    observations_provider: str = field(default_factory=lambda: _env("ALMANAC_OBSERVATIONS", "bom"))
+    hazard_providers: tuple = field(default_factory=lambda: _list("ALMANAC_HAZARDS", "rfs,hazardwatch,bom"))
+    warning_map_provider: str = field(default_factory=lambda: _env("ALMANAC_WARNING_MAPS", "bom"))
+    fire_danger_provider: str = field(default_factory=lambda: _env("ALMANAC_FIRE_DANGER", "rfs"))
+    air_quality_provider: str = field(default_factory=lambda: _env("ALMANAC_AIR_QUALITY", "openmeteo"))
+    photo_provider: str = field(default_factory=lambda: _env("ALMANAC_PHOTOS", "commons"))
+    normals_provider: str = field(default_factory=lambda: _env("ALMANAC_NORMALS", "era5"))
+    # Observations (BOM station WMO ids, from the state's 10-minute feed):
+    # the station that describes home, stand-ins for when it is silent, and
+    # coastal stations a southerly change reaches first.
+    obs_station: str = field(default_factory=lambda: _env("ALMANAC_OBS_STATION", "94760"))  # Horsley Park
+    # Sydney Olympic Park, Bankstown
+    obs_crosscheck: tuple = field(default_factory=lambda: _list("ALMANAC_OBS_CROSSCHECK", "95765,94765"))
+    # Kurnell, Sydney Airport, Fort Denison, Observatory Hill
+    obs_leading: tuple = field(default_factory=lambda: _list("ALMANAC_OBS_LEADING", "95756,94767,94769,94768"))
+    # The state's observations product (IDN60920 is New South Wales).
+    obs_product: str = field(default_factory=lambda: _env("ALMANAC_OBS_PRODUCT", "IDN60920"))
     # USB mode: serial device of a frame plugged into this machine (empty = off).
     usb_device: str = field(default_factory=lambda: _env("ALMANAC_USB_DEVICE", ""))
     # Wikimedia asks API clients for a descriptive User-Agent with a contact URL.

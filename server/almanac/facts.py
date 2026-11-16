@@ -6,8 +6,11 @@ left out. Hazards (hail, storms, fog) have fixed scores and every other fact
 is capped below them, so hail and storms always lead.
 
 `score(inputs)` is pure: plain values in, facts out. `inputs_for(forecast,
-...)` pulls those values out of a weather.Forecast, and `coming_hour(...)`
-does both. The top fact's score also sets how often the panel re-checks
+...)` pulls those values out of a domain.Forecast (and, when there are
+station observations, an observed.Observed), and `coming_hour(...)` does
+both. Observed figures take precedence over modelled ones: gauge rain
+since 9am and in the last hour replace the model's, and a southerly change
+seen at a station replaces a forecast one. The top fact's score also sets how often the panel re-checks
 the coming hour between hourly refreshes (`refresh_minutes`), and `digest`
 fingerprints what the panel would show, so only a real change redraws (see
 app.Almanac.alert).
@@ -18,7 +21,7 @@ from datetime import timedelta
 from typing import Optional
 
 from . import normals as normals_mod
-from . import weather
+from .domain import uv_label
 from .palette import BLACK, BLUE, ORANGE, RED
 
 # Re-check tiers: (lowest top-fact score, minutes between re-checks).
@@ -52,7 +55,7 @@ class Fact:
 @dataclass(frozen=True)
 class Inputs:
     """Everything the scorer looks at. Wind directions are degrees the wind
-    blows *from* (Open-Meteo's convention), or None when unknown."""
+    blows *from* (the meteorological convention), or None when unknown."""
 
     hour: int  # the clock hour now; the coming hour starts at hour + 1
     month: int  # this month (for the UV normal)
@@ -65,11 +68,16 @@ class Inputs:
     dir_next: Optional[float] = None
     uv: float = 0.0
     since9_mm: float = 0.0
-    last_hr_mm: float = 0.0
+    last_hr_mm: Optional[float] = 0.0  # None: unknown (observed since 9am, but a gap an hour back)
     storms_later: bool = False
     high: Optional[float] = None  # the forecast day's maximum
     high_month: Optional[int] = None  # the forecast day's month
     evening: bool = False  # the forecast describes tomorrow
+    # A southerly change seen at a station: "here" (home's station) or
+    # "coast" (a leading station, not yet home); None if none observed.
+    southerly_seen: Optional[str] = None
+    southerly_station: str = ""
+    southerly_gust: Optional[float] = None
 
 
 def half_up(x):
@@ -120,11 +128,29 @@ def rain_fact(i):
 
 
 def since9_fact(i):
-    # Both totals are Open-Meteo's modelled precipitation, not gauge readings.
+    # Gauge readings when a station reports them, else the forecast's
+    # modelled precipitation (see inputs_for).
     if i.since9_mm < 1:
         return None
-    return _capped("since9", 20 + min(30, i.since9_mm * 2), "Since 9am", f"{fmt_mm(i.since9_mm)} mm", BLUE,
-                   sub=f"{fmt_mm(i.last_hr_mm)} mm last hr")
+    sub = "" if i.last_hr_mm is None else f"{fmt_mm(i.last_hr_mm)} mm last hr"
+    return _capped("since9", 20 + min(30, i.since9_mm * 2), "Since 9am", f"{fmt_mm(i.since9_mm)} mm", BLUE, sub=sub)
+
+
+SOUTHERLY_ARRIVING = 80  # seen at the coast, not yet here: worth a 15-minute re-check
+SOUTHERLY_HERE = 50  # it has arrived: news, but no longer a warning
+
+
+def southerly_fact(i):
+    """A southerly change a station has actually seen (observed.py)."""
+    gust = "" if i.southerly_gust is None else f"gust {half_up(i.southerly_gust)} km/h"
+    if i.southerly_seen == "coast":
+        # No gust here: "southerly change arriving · gust 63 km/h" overflows
+        # the hero's two note lines beside a two-digit temperature.
+        return _capped("southerly-arriving", SOUTHERLY_ARRIVING, "Southerly change arriving",
+                       f"at {i.southerly_station}", ORANGE)
+    if i.southerly_seen == "here":
+        return _capped("southerly-here", SOUTHERLY_HERE, "Southerly change", "arrived", ORANGE, sub=gust)
+    return None
 
 
 def wind_fact(i):
@@ -133,6 +159,8 @@ def wind_fact(i):
         i.dir_now is not None and i.dir_next is not None
         and turn(i.dir_now, i.dir_next) >= 90 and max(i.wind, i.gust) >= 20
     )
+    if changing and i.southerly_seen and compass(i.dir_next) == "S":
+        changing = False  # an observed southerly (southerly_fact) supersedes the forecast one
     if changing:
         to = compass(i.dir_next)
         s = 55 + (10 if to == "S" else 0) + max(0, i.gust - 40) * 0.5
@@ -158,7 +186,7 @@ def uv_fact(i, normals):
         s, label = 12, "UV"
     else:
         return None
-    return _capped("uv", s, label, f"{uv} {weather.uv_label(uv)}", ORANGE)
+    return _capped("uv", s, label, f"{uv} {uv_label(uv)}", ORANGE)
 
 
 def high_fact(i, normals):
@@ -184,9 +212,10 @@ def _capped(key, s, label, value, ink, sub=""):
 
 def score(i, normals=None):
     """The coming hour's facts, highest score first (ties keep this order:
-    hazards, rain, since 9am, wind, UV, the high)."""
+    hazards, rain, since 9am, an observed southerly, wind, UV, the high)."""
     normals = normals or normals_mod.DEFAULT
-    found = hazard_facts(i) + [rain_fact(i), since9_fact(i), wind_fact(i), uv_fact(i, normals), high_fact(i, normals)]
+    found = hazard_facts(i) + [rain_fact(i), since9_fact(i), southerly_fact(i), wind_fact(i), uv_fact(i, normals),
+                               high_fact(i, normals)]
     return sorted((f for f in found if f is not None), key=lambda f: -f.score)
 
 
@@ -196,7 +225,7 @@ def score(i, normals=None):
 @dataclass(frozen=True)
 class Coming:
     label_hour: int  # the clock hour now; the panel says "3–4PM" for 15
-    hour: object  # weather.Hour for the coming hour
+    hour: object  # domain.Hour for the coming hour
     facts: list
 
 
@@ -205,8 +234,10 @@ def _hour(forecast, when):
     return next((h for h in (day.hours if day else []) if h.hour == when.hour), None)
 
 
-def inputs_for(forecast, now, poster_day, is_tomorrow):
-    """Inputs for the hour starting now, or None if the forecast lacks it."""
+def inputs_for(forecast, now, poster_day, is_tomorrow, observed=None):
+    """Inputs for the hour starting now, or None if the forecast lacks it.
+    `observed` (an observed.Observed, or None) overrides the modelled rain
+    so far and supplies any southerly change already seen."""
     if forecast is None or now is None:
         return None
     nxt = now + timedelta(hours=1)
@@ -214,13 +245,20 @@ def inputs_for(forecast, now, poster_day, is_tomorrow):
     if hour is None:
         return None
     current = _hour(forecast, now)
-    # "Since 9am" and "last hr" sum Open-Meteo's *modelled* hourly
-    # precipitation (each value covers the hour before its timestamp), not
-    # rain-gauge readings. Before 10am there is no completed hour since 9.
+    # Without observations, "since 9am" and "last hr" sum the forecast's
+    # *modelled* hourly precipitation (each value covers the hour before its
+    # timestamp). Before 10am there is no completed hour since 9.
     today = forecast.day(now.date())
     since9 = sum(h.rain_mm for h in (today.hours if today else []) if 9 < h.hour <= now.hour)
     later = forecast.day(nxt.date())
     storms_later = any(h.code in STORMS + HAIL for h in later.hours if h.hour > nxt.hour) if later else False
+    last_hr = 0.0 if current is None else current.rain_mm
+    if observed is not None and observed.since9_mm is not None:
+        since9, last_hr = observed.since9_mm, observed.last_hr_mm
+    seen = None
+    if observed is not None:
+        seen = ("here", observed.southerly_here) if observed.southerly_here else (
+            ("coast", observed.southerly_coast) if observed.southerly_coast else None)
     day_fc = forecast.day(poster_day)
     return Inputs(
         hour=now.hour,
@@ -234,17 +272,20 @@ def inputs_for(forecast, now, poster_day, is_tomorrow):
         dir_next=hour.wind_dir,
         uv=hour.uv,
         since9_mm=since9,
-        last_hr_mm=0.0 if current is None else current.rain_mm,
+        last_hr_mm=last_hr,
         storms_later=storms_later,
         high=None if day_fc is None else day_fc.t_max,
         high_month=poster_day.month,
         evening=is_tomorrow,
+        southerly_seen=seen[0] if seen else None,
+        southerly_station=seen[1].station if seen else "",
+        southerly_gust=seen[1].gust if seen else None,
     )
 
 
-def coming_hour(forecast, now, poster_day, is_tomorrow, normals=None):
+def coming_hour(forecast, now, poster_day, is_tomorrow, normals=None, observed=None):
     """The coming hour and its ranked facts, or None without data."""
-    i = inputs_for(forecast, now, poster_day, is_tomorrow)
+    i = inputs_for(forecast, now, poster_day, is_tomorrow, observed)
     if i is None:
         return None
     return Coming(now.hour, _hour(forecast, now + timedelta(hours=1)), score(i, normals))
