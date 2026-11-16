@@ -7,6 +7,11 @@
 #
 #   A  refresh now (redraws even if nothing changed)
 #   B  different photo for today
+#   C  radar mode on/off (the rain radar in place of the photo, until
+#      midnight or the rain has gone; the server keeps the mode and its
+#      rules, see server/almanac/radar.py). On USB power the frame redraws
+#      for each new radar frame while rain is near (the server's min_gap_s);
+#      on battery it shows the radar at its usual wakes and adds none.
 #   E  held while powering on: skip the app (safe mode, for mpremote/Thonny)
 #
 # USB mode: the board does nothing on its own. The renderer, on the machine
@@ -446,16 +451,27 @@ def _deadline_hit(timer):
     machine.reset()
 
 
-def cycle(state, force=False, shuffle=False):
-    """Returns minutes to sleep."""
+def radar_toggle(state):
+    """The mode a C press asks for: the other one from what was last drawn."""
+    return "normal" if state.get("mode") == "radar" else "radar"
+
+
+def cycle(state, force=False, shuffle=False, mode=None):
+    """Returns minutes to sleep. `mode` ("radar"/"normal"): button C."""
     inky_frame.led_busy.on()  # instant feedback: the frame is working
     dog = _watchdog()
     try:
-        log("fetch", "forced" if force else "", "shuffle" if shuffle else "")
+        log("fetch", "forced" if force else "", "shuffle" if shuffle else "", mode or "")
         connect_wifi()
         sync_clock(state)
         if shuffle:
             post("/shuffle")
+            force = True
+        if mode:
+            try:  # an older server answers 404: then this is just a redraw
+                post("/mode?set=" + mode)
+            except Exception as e:
+                log("mode change failed:", repr(e))
             force = True
         info = get_json("/frame.json")
         changed = info["hash"] != state.get("hash")
@@ -476,6 +492,10 @@ def cycle(state, force=False, shuffle=False):
         state.pop("error_shown", None)
         state["alert"] = info.get("alert", "")
         state["alert_poll"] = int(info.get("alert_poll_minutes") or 0)
+        state["mode"] = "radar" if info.get("mode") == "radar" else "normal"
+        state["alert_mode"] = state["mode"]
+        if mode and drew:
+            state["alert_drawn_at"] = time.time()  # the next radar frame waits its gap from this draw
         if drew:
             ota_commit()  # this version just completed a refresh that drew
         try:
@@ -526,6 +546,16 @@ def _failed(state, e):
 
 
 ALERT_MIN_GAP_S = 10 * 60  # at most one alert-driven redraw per 10 min (the first is immediate)
+ALERT_FLOOR_GAP_S = 4 * 60  # the least a server's min_gap_s (radar mode) can ask for
+
+
+def alert_gap_s(value):
+    """The redraw gap the server asked for (radar mode's min_gap_s), clamped
+    to [ALERT_FLOOR_GAP_S, ALERT_MIN_GAP_S]; anything absent or not a number
+    (an older server, junk) is the usual ALERT_MIN_GAP_S."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or value != value:
+        return ALERT_MIN_GAP_S
+    return int(max(ALERT_FLOOR_GAP_S, min(ALERT_MIN_GAP_S, value)))
 
 
 def check_alert(state=None):
@@ -534,7 +564,11 @@ def check_alert(state=None):
     dog = _watchdog()
     try:
         connect_wifi()
-        return get_json("/alert.json").get("id", "")
+        answer = get_json("/alert.json")
+        if state is not None:  # radar mode: the server may ask for a shorter gap
+            state["alert_gap"] = answer.get("min_gap_s")
+            state["alert_mode"] = "radar" if answer.get("mode") == "radar" else "normal"
+        return answer.get("id", "")
     except MemoryError as e:
         if uptime_ms() > FRESH_HEAP_MS:
             restart_fresh(state if state is not None else {}, "out of memory checking alerts (%r)" % (e,))
@@ -557,11 +591,13 @@ def alert_redraw_due(state, new):
         return False
     if not state.get("alert") or not new:
         return True
-    return time.time() - state.get("alert_drawn_at", 0) >= ALERT_MIN_GAP_S
+    if state.get("alert_mode", "normal") != state.get("mode", "normal"):
+        return True  # radar mode began or ended on the server (midnight, rain gone, a new warning)
+    return time.time() - state.get("alert_drawn_at", 0) >= alert_gap_s(state.get("alert_gap"))
 
 
 def rest(minutes, state=None):
-    """Sleep `minutes`. Returns "a"/"b" if a button cut it short, or "alert"
+    """Sleep `minutes`. Returns "a"/"b"/"c" if a button cut it short, or "alert"
     if a new specific hazard warning appeared (USB power only: on battery the
     board is off until the RTC alarm)."""
     try:
@@ -583,7 +619,7 @@ def rest(minutes, state=None):
     # ticks subtraction, which stops seeing presses once ticks_ms wraps
     # (~12.4 days of uptime).
     deadline = time.ticks_add(time.ticks_ms(), minutes * 60000)
-    was = {"a": True, "b": True}  # a press already held at entry doesn't count
+    was = {"a": True, "b": True, "c": True}  # a press already held at entry doesn't count
     # No alert polling while cycles are failing: the retry backoff stands.
     poll = 0 if (state or {}).get("fail_count") else ((state or {}).get("alert_poll") or 0)
     next_poll = time.ticks_add(time.ticks_ms(), max(1, poll) * 60000)
@@ -595,7 +631,7 @@ def rest(minutes, state=None):
                 log("alert changed:", new or "(cleared)")
                 state["alert_drawn_at"] = time.time()
                 return "alert"
-        for name, button in (("a", inky_frame.button_a), ("b", inky_frame.button_b)):
+        for name, button in (("a", inky_frame.button_a), ("b", inky_frame.button_b), ("c", inky_frame.button_c)):
             down = button.raw()
             if down and not was[name]:
                 return name
@@ -612,7 +648,8 @@ def main():
     state = load_state()
     rtc_wake = inky_frame.woken_by_rtc()
     # A button press that woke the board (battery) counts as a press.
-    press = "a" if inky_frame.button_a.read() else "b" if inky_frame.button_b.read() else None
+    press = "a" if inky_frame.button_a.read() else "b" if inky_frame.button_b.read() else (
+        "c" if inky_frame.button_c.read() else None)
     # Plugged in or powered on (not a scheduled RTC wake): redraw even if the
     # poster is unchanged, so a power cycle visibly does something.
     force = press == "a" or (press is None and not rtc_wake) or bool(state.pop("force_next", False))
@@ -626,10 +663,14 @@ def main():
             restart_fresh(state, "daily fresh start after %d h" % (uptime_ms() // 3600000))
         if press:
             log("button", press)
-            inky_frame.button_a.led_on() if press == "a" else inky_frame.button_b.led_on()
-        minutes = cycle(state, force=force, shuffle=press == "b")
+            {"a": inky_frame.button_a, "b": inky_frame.button_b, "c": inky_frame.button_c}[press].led_on()
+        if press == "c":
+            minutes = cycle(state, force=True, mode=radar_toggle(state))
+        else:
+            minutes = cycle(state, force=force, shuffle=press == "b")
         inky_frame.button_a.led_off()
         inky_frame.button_b.led_off()
+        inky_frame.button_c.led_off()
         try:
             save_state(state)
         except OSError as e:

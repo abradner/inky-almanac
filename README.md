@@ -80,9 +80,33 @@ replaces the poster with an error screen.
 |---|---|
 | **A** | Refresh now. |
 | **B** | A different photo for today. The status page's "Different photo" button does the same. |
+| **C** | Radar mode on or off (see below). The status page has a button for it too. |
 | **E**, held at power-on | Safe mode: the app doesn't start, so you can connect a computer. |
 
 Plugging the frame in, or resetting it, always redraws the poster straight away.
+
+### Radar mode
+
+![Radar mode: the Sydney rain radar in place of the photo](docs/img/poster-radar.png)
+
+*Radar mode, drawn from a recorded radar frame (heavy rain over Sydney,
+16 November 2026) beside a sample side panel.*
+
+Press **C** and the photo gives way to the Bureau's rain radar (Sydney,
+Terrey Hills, 64 km range), with home marked by a small ring. Light rain is a
+pale blue stipple, moderate rain blue and green, heavy rain yellow, orange and
+red. The side panel stays as it is, and hazard badges still sit over the
+picture.
+
+- **While it rains within 64 km of home**, the frame redraws for each new
+  radar frame, about every 5 minutes. Otherwise it redraws about every 10.
+- **It ends by itself** at midnight, or once it has run 2 hours and the radar
+  shows no rain at all. Press **C** again to leave sooner.
+- **A new warning ends it**, so the warning's map shows. A reissue of a
+  warning already in force doesn't.
+- **On battery** the frame shows the radar at its usual hourly wakes. The
+  faster updates need USB power, because a sleeping board can't watch for
+  new frames.
 
 ## How it works
 
@@ -122,6 +146,8 @@ poster.
 | `server/almanac/providers/` | every external source, one adapter module each (see "Adding or swapping a provider") |
 | `server/almanac/data/uv_normals.json` | hourly UV normals for Sydney, built by `tools/build_uv_normals.py` |
 | `server/almanac/schedule.py` | when the frame wakes, and which day the poster describes |
+| `server/almanac/radar.py` | radar mode's rules: when it ends, rain near home, how often it redraws (pure) |
+| `server/almanac/radar_poster.py` | the radar drawn in inks |
 | `server/almanac/usbpush.py` | USB mode: the server drives a frame over the serial cable |
 | `frame/almanac_frame.py` | the frame app: WiFi, fetch, draw, sleep, buttons, OTA install |
 | `frame/main.py` | boot guard; never updated over the air |
@@ -207,6 +233,7 @@ container). The defaults live in `server/almanac/config.py`.
 | `ALMANAC_OBS_CROSSCHECK` | 95765,94765 (Sydney Olympic Park, Bankstown: stand in when the home station is silent) |
 | `ALMANAC_OBS_LEADING` | 95756,94767,94769,94768 (Kurnell, Sydney Airport, Fort Denison, Observatory Hill: where a southerly arrives first) |
 | `ALMANAC_OBS_PRODUCT` | IDN60920 (BOM's NSW 10-minute observations; other states have their own) |
+| `ALMANAC_RADAR`, `ALMANAC_RADAR_PRODUCT` | bom, IDR714 (radar mode's source and product: Sydney, Terrey Hills, 64 km; `none` turns radar mode off: C then just redraws) |
 
 The photo categories are `CATEGORIES` in `providers/commons.py`. The pool refreshes every
 14 days; to force a refresh, delete `photo-pool.json` from the cache volume.
@@ -228,6 +255,7 @@ state or country replaces adapters and leaves the rest alone.
 | fire danger | `FireDangerProvider.fire_danger()` → `FireDanger` | `rfs` | `ALMANAC_FIRE_DANGER` |
 | air quality | `AirQualityProvider.air_quality()` → `[AirQualityHour]` | `openmeteo` | `ALMANAC_AIR_QUALITY` |
 | photos | `PhotoProvider.photo_for()` → `Photo` | `commons` | `ALMANAC_PHOTOS` |
+| rain radar | `RadarProvider.refresh()`, `.latest()` → `RadarImage` | `bom` (radar frames over anonymous FTP) | `ALMANAC_RADAR` |
 | climate normals | `normals.Normals` (`normal_max`, `normal_uv`) | `era5` (+ ARPANSA UV), `placeholder` | `ALMANAC_NORMALS` |
 
 Sun and moon are not providers: sunrise and sunset arrive with the forecast,
@@ -296,6 +324,41 @@ copyright notice). The renderer doesn't use `api.weather.bom.gov.au` (its
 responses forbid reuse) and doesn't scrape bom.gov.au pages. Station IDs are
 WMO numbers; find others in the product itself (`<station wmo-id=…
 description=…>`).
+
+## Rain radar
+
+The `bom` radar adapter (`providers/bom_radar.py`) reads BOM's radar frames
+over anonymous FTP, and only in radar mode: a background thread asks it every
+minute while the mode is on (and at once when C is pressed), and never
+otherwise.
+
+- **Frames**: `ftp://ftp.bom.gov.au/anon/gen/radar/IDR714.T.<UTC stamp>.png`,
+  one about every 5 minutes, about 25 kept. The adapter lists only
+  `IDR714.T.*` (the full listing is about 1 MB) and only once the next frame
+  is due: the newest stamp plus the spacing the listing shows, plus a minute
+  for BOM to publish it. A late frame is looked for at most once a minute;
+  failures back off from 2 minutes, doubling, to 15.
+- **The map underneath** comes from separate transparent layers in
+  `/anon/gen/radar_transparencies/` (background, topography, range, locations),
+  fetched once and re-checked weekly. A frame holds only the rain, a grey
+  copyright bar along the top and a line of text along the bottom, so nothing
+  is subtracted.
+- **Rain colours** are BOM's rain-rate scale, matched by RGB (palette indices
+  vary between frames) to levels 1-15, light to extreme. Levels 1-13 come from
+  real frames' palettes; 14 and 15 from BOM's legend. `radar_poster.RAIN_INKS`
+  maps each level to an ink or a 4x4 ordered stipple of two inks.
+- **Geometry**: the radar site is the image centre, 0.25 km per pixel at the
+  64 km range (verified from the range rings and town dots). "Rain within
+  64 km" counts rain pixels inside that circle around home; the part of the
+  circle off the image (home is not at the radar) can't be seen. Fewer than 12
+  rain pixels count as clutter, not rain.
+- **The poster** asks the frame for a faster redraw through `/alert.json`:
+  in radar mode it carries `mode` and `min_gap_s` (240 with rain near home,
+  600 otherwise), and the alert id gains `radar:<frame time>`. The frame clamps
+  `min_gap_s` to 4-10 minutes and ignores anything else. In normal mode
+  `/alert.json` answers exactly as before.
+- **The mode** is kept in the cache volume (`radar-mode.json`), so it survives
+  a restart. `POST /mode?set=radar|normal` changes it.
 
 ## Climate normals
 

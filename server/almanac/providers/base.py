@@ -14,7 +14,7 @@ with the matching ALMANAC_* setting (see config.py and the README).
 from datetime import date
 from typing import Optional, Protocol
 
-from ..domain import DayOutlook, FireDanger, Forecast, MapImage, Photo, StationLogs
+from ..domain import DayOutlook, FireDanger, Forecast, MapImage, Photo, RadarImage, StationLogs
 from . import cache
 
 HAZARD_TTL = 90  # refreshed every 2 min in the background; requests read the cache
@@ -72,6 +72,17 @@ class PhotoProvider(Protocol):
     def photo_for(self, day: date, shuffle: int = 0) -> Optional[Photo]: ...
 
     def refresh_pool(self) -> None: ...
+
+
+class RadarProvider(Protocol):
+    """Rain radar frames, fetched just in time: the background refresher
+    calls `refresh` only while the poster is in radar mode, and it must not
+    fetch faster than the source issues frames. `latest` reads the
+    provider's own store (never the network)."""
+
+    def refresh(self, now: Optional[float] = None) -> None: ...
+
+    def latest(self, now: Optional[float] = None) -> Optional[RadarImage]: ...
 
 
 # Normals: see normals.Normals (normal_max / normal_uv), which predates this

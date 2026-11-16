@@ -29,6 +29,7 @@ REGISTRY = {
     "fire_danger": {"rfs": "rfs_fire_danger:RfsFireDanger"},
     "air_quality": {"openmeteo": "openmeteo_air:OpenMeteoAir"},
     "photos": {"commons": "commons:CommonsPhotos"},
+    "radar": {"bom": "bom_radar:BomRadar"},
     "normals": {"era5": "climate:NORMALS", "placeholder": "..normals:PLACEHOLDER"},
 }
 
@@ -66,6 +67,7 @@ class Providers:
     fire_danger: object = None
     air_quality: object = None
     photos: object = None
+    radar: object = None
 
 
 def build(cfg, get_text=None):
@@ -80,6 +82,7 @@ def build(cfg, get_text=None):
         fire_danger=_one("fire_danger", cfg.fire_danger_provider, cfg, get_text),
         air_quality=_one("air_quality", cfg.air_quality_provider, cfg, get_text),
         photos=_one("photos", cfg.photo_provider, cfg, get_text),
+        radar=_one("radar", cfg.radar_provider, cfg, get_text),
     )
 
 

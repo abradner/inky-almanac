@@ -21,7 +21,7 @@ PROVIDER_STRINGS = (
     "open-meteo", "openmeteo", "temperature_2m", "precipitation_probability", "weather_code",
     "rain_trace", "rainfall_24hr", "wind_spd_kmh", "gust_kmh", "air_temperature", "wmo-id",
     "commons", "wikimedia", "hazardwatch", "rfs.nsw", "bom.gov.au", "IDN", "ERA5", "ARPANSA",
-    "Bureau of Meteorology",
+    "Bureau of Meteorology", "radar_transparencies", "Terrey Hills",
 )
 
 

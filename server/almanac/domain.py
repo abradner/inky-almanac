@@ -220,6 +220,37 @@ class MapImage:
     credit: str = ""
 
 
+# ------------------------------------------------------------------ rain radar
+
+RAIN_LEVELS = 15  # a radar frame's rain, light (1) to extreme (RAIN_LEVELS)
+# What the base map under a radar frame shows, per pixel (RadarImage.base).
+BASE_NONE, BASE_COAST, BASE_RING, BASE_LABEL = 0, 1, 2, 3
+BASE_TOPO = 4  # BASE_TOPO + n: elevation band n (0 lowest); drawn quietly or not at all
+
+
+@dataclass(frozen=True)
+class RadarImage:
+    """One rain radar frame, ready to draw in place of the photo.
+
+    Both planes are row-major `width` x `height`, one byte per pixel: `rain`
+    holds 0 (none) or a level 1..RAIN_LEVELS, light to extreme, on the
+    source's own rain-rate scale; `base` holds BASE_* classes from the
+    source's background layers (coast, range rings, place names). The radar
+    site is at the image centre and the projection is flat at `km_per_px`."""
+
+    width: int
+    height: int
+    rain: bytes
+    base: bytes
+    issued_at: float  # unix time of the scan
+    km_per_px: float
+    site_lat: float
+    site_lon: float
+    name: str = ""  # the radar's name, for the caption
+    range_km: int = 0
+    credit: str = ""
+
+
 @dataclass(frozen=True)
 class AirQualityHour:
     at: datetime  # naive local
