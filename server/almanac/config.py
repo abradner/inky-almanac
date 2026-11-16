@@ -58,6 +58,10 @@ class Config:
     air_quality_provider: str = field(default_factory=lambda: _env("ALMANAC_AIR_QUALITY", "openmeteo"))
     photo_provider: str = field(default_factory=lambda: _env("ALMANAC_PHOTOS", "commons"))
     normals_provider: str = field(default_factory=lambda: _env("ALMANAC_NORMALS", "era5"))
+    # Rain radar for radar mode (button C). The product is BOM's IDR<site><range>:
+    # IDR714 is Sydney (Terrey Hills) at its 64 km range.
+    radar_provider: str = field(default_factory=lambda: _env("ALMANAC_RADAR", "bom"))
+    radar_product: str = field(default_factory=lambda: _env("ALMANAC_RADAR_PRODUCT", "IDR714"))
     # Observations (BOM station WMO ids, from the state's 10-minute feed):
     # the station that describes home, stand-ins for when it is silent, and
     # coastal stations a southerly change reaches first.

@@ -3,7 +3,9 @@
 GET  /frame.json   {hash, size, sleep_minutes, ...}: cheap; the frame compares hash
 GET  /frame.png    the poster as a 4-bit indexed PNG whose indices are panel inks
 GET  /preview.png  the same poster in the inks' real-world colours, for browsers
+GET  /alert.json   {id, [mode, min_gap_s]}: what the frame polls between wakes
 POST /shuffle      pick a different photo for the rest of today
+POST /mode?set=radar|normal   radar mode (button C; see radar.py)
 GET  /             a small status page with the preview
 
 Add ?at=2026-11-10T21:30 to any GET to render for another moment (debugging).
@@ -22,7 +24,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 from zoneinfo import ZoneInfo
 
-from . import conditions, facts, observed, providers, schedule
+from . import conditions, facts, observed, providers, radar as radar_mod, schedule
 from .config import Config
 from .anchor import anchor_temps
 from .domain import apply_outlook
@@ -35,11 +37,14 @@ ALERT_POLL_MINUTES = 2  # how often a USB-powered frame asks /alert.json
 ALERT_REFRESH_S = 90  # how often the renderer re-reads the hazard feeds
 OBS_CHECK_S = 60  # how often to ask the observations provider (it rate-limits itself)
 DEFAULT_FORECAST_TTL_S = 20 * 60  # for a forecast provider that doesn't say
+RADAR_CHECK_S = 60  # how often the radar fetcher wakes in radar mode (the provider keeps to its cadence)
+RADAR_FIRST_FRAME_WAIT_S = 20  # how long POST /mode?set=radar waits for a first frame
+LIVE_SLACK_S = 120  # a `now` this close to the clock is live, not a ?at= render
 
 
 class Almanac:
     def __init__(self, cfg, *, weather_loader=None, photo_loader=None, conditions_loader=None, bom_loader=None,
-                 observations_loader=None):
+                 observations_loader=None, radar_loader=None):
         self.cfg = cfg
         self.tz = ZoneInfo(cfg.timezone)
         self.cfg.cache_dir.mkdir(parents=True, exist_ok=True)
@@ -68,6 +73,14 @@ class Almanac:
         self.on_change = []  # callbacks run after /shuffle (USB mode pushes at once)
         self._held_fact = None  # (since, minutes, id, drawn state, slot): see _fact_alert
         self._held_lock = threading.Lock()
+        # Radar mode (button C). The request path only reads the radar
+        # provider's store; the radar thread in main() fetches, and only in
+        # radar mode (radar_tick).
+        radar = radar_loader or (lambda now: p.radar.latest(now.timestamp()) if p.radar else None)
+        self.radar = radar_mod.RadarMode(cfg.cache_dir / "radar-mode.json", (cfg.latitude, cfg.longitude), radar)
+        self.radar_available = radar_loader is not None or p.radar is not None
+        self.radar_wanted = threading.Event()  # wakes the radar thread
+        self.radar_fetched = threading.Event()  # set after each radar fetch attempt
 
     # -- shuffle state survives restarts, resets each day
     def _shuffle_path(self):
@@ -136,7 +149,7 @@ class Almanac:
         shuffle = self.shuffle_count(day)
         forecast = self.forecast()
         obs = self.observed(now)
-        cond, alert = self._alert(now, day, is_tomorrow, forecast, obs)
+        cond, alert, view = self._alert(now, day, is_tomorrow, forecast, obs)
         # The alert is part of the key: a warning issued mid-hour (or an
         # urgent fact about the coming hour) must make a new poster now, not
         # at the next slot.
@@ -145,9 +158,9 @@ class Almanac:
             hit = self._cache.get(key)
             if hit:
                 return hit
-            photo = self._photo(day, shuffle)
+            photo = self._photo(day, shuffle) if view is None else None
             canvas = render(now=now, poster_day=day, is_tomorrow=is_tomorrow, forecast=forecast, photo=photo, cfg=self.cfg, cond=cond,
-                            observed=obs)
+                            observed=obs, radar=False if view is None else view.radar)
             buf = io.BytesIO()
             canvas.save(buf, "PNG", bits=4, optimize=True)
             png = buf.getvalue()
@@ -158,6 +171,7 @@ class Almanac:
                 "photo": None if photo is None else f"{photo.title} ({photo.credit})",
                 "conditions": cond,
                 "alert": alert,
+                "mode": radar_mod.NORMAL if view is None else radar_mod.RADAR,
                 "day": day.isoformat(),
                 "tomorrow": is_tomorrow,
                 "rendered_at": time.time(),
@@ -178,19 +192,72 @@ class Almanac:
 
     def alert(self, now):
         """The current alert id: cheap, cache-only (what the frame polls)."""
+        return self.alert_info(now)["id"]
+
+    def alert_info(self, now):
+        """/alert.json: the alert id, and in radar mode the mode and how soon
+        the frame may redraw for a new radar frame (min_gap_s). Normal mode
+        answers exactly as before radar mode existed."""
         day, is_tomorrow = schedule.poster_day(now, self.cfg.tomorrow_from_hour)
-        return self._alert(now, day, is_tomorrow, self.forecast(), self.observed(now))[1]
+        _, alert, view = self._alert(now, day, is_tomorrow, self.forecast(), self.observed(now))
+        if view is None:
+            return {"id": alert}
+        return {"id": alert, "mode": radar_mod.RADAR, "min_gap_s": view.min_gap_s}
 
     def _alert(self, now, day, is_tomorrow, forecast, obs=None):
-        """(conditions, alert id). The id joins the specific hazards' id with
-        "wx:<digest>" while the coming hour has a fact worth re-checking for
-        (see _fact_alert), so the frame's existing /alert.json poll redraws
-        when what the panel would show changes, under the warning rules (a
-        first alert or a clear redraws at once; any other change at most
-        every 10 minutes)."""
+        """(conditions, alert id, radar view or None). The id joins the
+        specific hazards' id with "wx:<digest>" while the coming hour has a
+        fact worth re-checking for (see _fact_alert), and with
+        "radar:<frame time>" in radar mode, so the frame's existing
+        /alert.json poll redraws when what the panel would show changes,
+        under the warning rules (a first alert or a clear redraws at once;
+        any other change at most every 10 minutes, or min_gap_s)."""
         cond = self.conditions(day, is_tomorrow, now)
-        parts = [cond.alert if cond else "", self._fact_alert(now, day, is_tomorrow, forecast, obs)]
-        return cond, "+".join(p for p in parts if p)
+        view = self.radar_view(now, cond)
+        parts = [cond.alert if cond else "", self._fact_alert(now, day, is_tomorrow, forecast, obs),
+                 view.alert if view else ""]
+        return cond, "+".join(p for p in parts if p), view
+
+    # -- radar mode
+    def _live(self, now):
+        return abs(now.timestamp() - time.time()) < LIVE_SLACK_S
+
+    def radar_view(self, now, cond):
+        """radar.View in radar mode, else None. Applies the exit rules (and
+        saves them only for a live request, never a ?at= render)."""
+        try:
+            return self.radar.view(now, cond.hazards if cond else None, persist=self._live(now))
+        except Exception as e:  # radar mode is optional; never let it take the poster down
+            print(f"radar mode failed: {e!r}", flush=True)
+            return None
+
+    def set_mode(self, mode, now=None, wait_s=0):
+        """Enter or leave radar mode. Entering wakes the radar fetcher and
+        waits up to `wait_s` for it, so the first radar poster has a frame."""
+        now = now or self.now()
+        day, is_tomorrow = schedule.poster_day(now, self.cfg.tomorrow_from_hour)
+        cond = self.conditions(day, is_tomorrow, now)
+        self.radar_fetched.clear()
+        self.radar.set(mode, now, cond.hazards if cond else None)
+        if mode == radar_mod.RADAR:
+            self.radar_wanted.set()
+            if wait_s:
+                self.radar_fetched.wait(wait_s)
+        for callback in self.on_change:
+            callback()
+        return mode
+
+    def radar_tick(self, live_radar, now=None):
+        """One pass of the radar fetcher: fetch (as the provider's cadence
+        allows) only in radar mode. Returns whether it asked."""
+        now = now or self.now()
+        try:
+            if live_radar is None or not self.radar.active(now):
+                return False
+            live_radar.refresh()
+            return True
+        finally:
+            self.radar_fetched.set()
 
     def _fact_alert(self, now, day, is_tomorrow, forecast, obs=None):
         """"wx:<digest>" while a re-check tier applies (facts.refresh_minutes:
@@ -273,6 +340,7 @@ class Almanac:
             "photo": p["photo"],
             "alert": p["alert"],
             "alert_poll_minutes": ALERT_POLL_MINUTES,
+            "mode": p["mode"],
             "server_time": now.isoformat(timespec="seconds"),
         }
         code = self.ota_manifest()
@@ -334,7 +402,7 @@ def make_handler(app):
                         return self._json({"error": "no release"}, HTTPStatus.NOT_FOUND)
                     return self._send(HTTPStatus.OK, body, "text/x-python")
                 if url.path == "/alert.json":
-                    return self._json({"id": app.alert(now)})
+                    return self._json(app.alert_info(now))
                 if url.path == "/healthz":
                     return self._send(HTTPStatus.OK, b"ok\n", "text/plain")
                 if url.path == "/":
@@ -352,10 +420,26 @@ def make_handler(app):
             self._json({"error": "not found"}, HTTPStatus.NOT_FOUND)
 
         def do_POST(self):
-            if urlparse(self.path).path == "/shuffle":
+            url = urlparse(self.path)
+            if url.path in ("/shuffle", "/mode"):
                 origin = self.headers.get("Origin")
                 if origin and urlparse(origin).netloc != self.headers.get("Host"):
                     return self._json({"error": "cross-origin"}, HTTPStatus.FORBIDDEN)
+            if url.path == "/mode":
+                mode = parse_qs(url.query).get("set", [None])[0]
+                if mode not in radar_mod.MODES:
+                    return self._json({"error": "set=radar or set=normal"}, HTTPStatus.BAD_REQUEST)
+                if mode == radar_mod.RADAR and not app.radar_available:
+                    return self._json({"error": "no radar configured"}, HTTPStatus.CONFLICT)
+                try:
+                    app.set_mode(mode, wait_s=RADAR_FIRST_FRAME_WAIT_S)
+                except Exception as e:
+                    self.log_error("mode change failed: %r", e)
+                    return self._json({"error": "mode change failed"}, HTTPStatus.INTERNAL_SERVER_ERROR)
+                if "text/html" in self.headers.get("Accept", ""):
+                    return self._send(HTTPStatus.SEE_OTHER, b"", "text/plain", {"Location": "/"})
+                return self._json({"mode": mode})
+            if url.path == "/shuffle":
                 try:
                     n = app.shuffle(app.now())
                 except Exception as e:
@@ -377,6 +461,8 @@ th{{text-align:left;padding-right:1em}}</style>
 <h1>Inky Almanac</h1><img src="/preview.png" alt="poster preview">
 <table>{rows}</table>
 <form method=post action=/shuffle><button>Different photo</button></form>
+<form method=post action="/mode?set={"normal" if info.get("mode") == "radar" else "radar"}"><button>{
+"Back to the photo" if info.get("mode") == "radar" else "Radar mode"}</button></form>
 <p>The frame picks up a change at its next wake (or press A on the frame).</p>"""
 
 
@@ -455,6 +541,20 @@ def main():
 
     if live.photos:
         threading.Thread(target=keep_pool_fresh, name="pool", daemon=True).start()
+
+    def keep_radar_fresh():
+        """Radar frames just in time: only in radar mode, woken at once by
+        POST /mode?set=radar, otherwise every RADAR_CHECK_S."""
+        while True:
+            app.radar_wanted.wait(RADAR_CHECK_S)
+            app.radar_wanted.clear()
+            try:
+                app.radar_tick(live.radar)
+            except Exception as e:
+                print(f"radar refresh failed: {e!r}", flush=True)
+
+    if live.radar:
+        threading.Thread(target=keep_radar_fresh, name="radar", daemon=True).start()
     # Normals that are built from an archive (ERA5: a 30-year pull, the first
     # time and yearly after) build in the background; their placeholder
     # answers until they are done.

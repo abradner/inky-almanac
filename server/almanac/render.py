@@ -867,13 +867,18 @@ def draw_badges(canvas, cond, x=12, y=12):
         y += h + (6 if badge.small else 10)
 
 
-def render(*, now, poster_day, is_tomorrow, forecast, photo, cfg, cond=None, layout=None, observed=None):
+def render(*, now, poster_day, is_tomorrow, forecast, photo, cfg, cond=None, layout=None, observed=None,
+           radar=False):
     """The poster. Pass a dict as `layout` to get back what draw_side used
-    (section boxes, the caption's top, the facts)."""
+    (section boxes, the caption's top, the facts). In radar mode `radar` is
+    the domain.RadarImage (or None while waiting for one): it takes the
+    picture area, with the badges over it, and the photo isn't shown."""
     canvas = new_canvas((W, H), WHITE)
     warning = getattr(cond, "warning", None) if cond else None
     set_layout(500)
-    if warning:
+    if radar is not False:
+        photo, warning = _draw_radar(canvas, radar, cond, cfg, now), None
+    elif warning:
         try:
             set_layout(draw_warning_map(canvas, warning))
         except Exception as e:  # a bad map must never take the poster down
@@ -881,7 +886,7 @@ def render(*, now, poster_day, is_tomorrow, forecast, photo, cfg, cond=None, lay
             warning = None
             cond.warning = None
             set_layout(500)
-    if not warning:
+    if not warning and radar is False:
         draw_photo(canvas, photo)
         draw_badges(canvas, cond)  # over a map, warnings are listed in the text panel instead
     day_fc = forecast.day(poster_day) if forecast else None
@@ -890,3 +895,20 @@ def render(*, now, poster_day, is_tomorrow, forecast, photo, cfg, cond=None, lay
     if layout is not None:
         layout.update(used, side=(SIDE_X, SIDE_W), photo_w=PHOTO_W)
     return canvas
+
+
+def _draw_radar(canvas, radar, cond, cfg, now):
+    """Radar mode's picture: the radar, the badges over it (a warning's map
+    gives way to the radar, so its badge shows), and a stand-in photo whose
+    title and credit caption the radar."""
+    from dataclasses import replace
+    from types import SimpleNamespace
+    from zoneinfo import ZoneInfo
+
+    from . import radar_poster
+
+    tz = ZoneInfo(cfg.timezone)
+    radar_poster.draw(canvas, radar, size=(PHOTO_W, H), home=(cfg.latitude, cfg.longitude), tz=tz, now=now, font=BOLD)
+    draw_badges(canvas, replace(cond, warning=None) if cond is not None else None)
+    title, credit = radar_poster.caption(radar, tz)
+    return SimpleNamespace(title=title, credit=credit)

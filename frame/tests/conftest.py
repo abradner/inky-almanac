@@ -81,7 +81,7 @@ def frame(monkeypatch, tmp_path):
     WLAN.instances.clear()
     inky = types.SimpleNamespace(
         led_busy=Led(), led_wifi=Led(),
-        button_a=Button(), button_b=Button(), button_e=Button(),
+        button_a=Button(), button_b=Button(), button_c=Button(), button_e=Button(),
         rtc_wake=False, WHITE=1, BLACK=0, RED=4,
     )
     inky.woken_by_rtc = lambda: inky.rtc_wake

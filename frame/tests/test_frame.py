@@ -14,8 +14,8 @@ def run_main(a, monkeypatch, presses=(), cycles=2):
     calls = []
     presses = list(presses)
 
-    def fake_cycle(state, force=False, shuffle=False):
-        calls.append({"force": force, "shuffle": shuffle, "busy": a.inky.led_busy.lit})
+    def fake_cycle(state, force=False, shuffle=False, mode=None):
+        calls.append({"force": force, "shuffle": shuffle, "mode": mode, "busy": a.inky.led_busy.lit})
         return 60
 
     def fake_rest(minutes, state=None):
