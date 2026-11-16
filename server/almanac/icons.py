@@ -7,14 +7,15 @@ from . import astro
 from .palette import BLACK, BLUE, ORANGE, WHITE, YELLOW
 
 
-def sun(d, cx, cy, r, rays=True):
+def sun(d, cx, cy, r, rays=True, ray=(5, 13), ray_w=4, outline=3):
+    """A sun of radius r; rays run from r + ray[0] to r + ray[1]."""
     if rays:
         for k in range(8):
             a = k * math.pi / 4
-            x1, y1 = cx + math.cos(a) * (r + 5), cy + math.sin(a) * (r + 5)
-            x2, y2 = cx + math.cos(a) * (r + 13), cy + math.sin(a) * (r + 13)
-            d.line([(x1, y1), (x2, y2)], fill=ORANGE, width=4)
-    d.ellipse([cx - r, cy - r, cx + r, cy + r], fill=YELLOW, outline=ORANGE, width=3)
+            x1, y1 = cx + math.cos(a) * (r + ray[0]), cy + math.sin(a) * (r + ray[0])
+            x2, y2 = cx + math.cos(a) * (r + ray[1]), cy + math.sin(a) * (r + ray[1])
+            d.line([(x1, y1), (x2, y2)], fill=ORANGE, width=ray_w)
+    d.ellipse([cx - r, cy - r, cx + r, cy + r], fill=YELLOW, outline=ORANGE, width=outline)
 
 
 def cloud(d, x, y, w, fill=WHITE, outline=BLACK, stroke=3):
@@ -63,10 +64,14 @@ def weather(d, kind, x, y, size):
         cloud(d, x + s * 0.08, y + s * 0.10, s * 0.80)
         n, length = {"drizzle": (3, s * 0.12), "rain": (4, s * 0.22), "showers": (3, s * 0.20)}[kind]
         _drops(d, x + s * 0.12, y + s * 0.68, s * 0.70, n, length)
-    elif kind == "storm":
+    elif kind in ("storm", "hail"):
         cloud(d, x + s * 0.08, y + s * 0.06, s * 0.80)
         bolt = [(0.52, 0.52), (0.36, 0.78), (0.48, 0.78), (0.40, 0.98), (0.66, 0.68), (0.53, 0.68), (0.62, 0.52)]
         d.polygon([(x + s * a, y + s * b) for a, b in bolt], fill=YELLOW, outline=BLACK, width=2)
+        if kind == "hail":  # two hailstones either side of the bolt
+            for cx in (0.24, 0.76):
+                r = s * 0.06
+                d.ellipse([x + s * cx - r, y + s * 0.88 - r, x + s * cx + r, y + s * 0.88 + r], fill=WHITE, outline=BLUE, width=3)
     elif kind == "snow":
         cloud(d, x + s * 0.08, y + s * 0.08, s * 0.80)
         for k in range(3):

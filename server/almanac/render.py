@@ -6,12 +6,15 @@ and the photo's caption and credit. Everything on the right is drawn with solid 
 so text stays crisp.
 """
 
-from datetime import datetime
+import re
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageEnhance, ImageFont
 
 from . import astro, conditions as cond_mod, icons, weather
+from . import facts as facts_mod
+from .facts import coming_hour
 from .dither import atkinson, map_inks
 from .palette import BLACK, BLUE, GREEN, INK_RGB, ORANGE, PNG_RGB, RED, WHITE, YELLOW, _flat, new_canvas, palette_image
 
@@ -65,11 +68,14 @@ def fit_text(d, text, fnt, width):
     return text.rstrip(" ,;:-") + "…"
 
 
-def wrap(d, text, fnt, width, lines):
-    words, out, cur = text.split(), [], ""
+def wrap(d, text, fnt, width, lines, first_indent=0):
+    """Up to `lines` lines of `text`, each within `width` (the first within
+    width - first_indent); the last is cut with an ellipsis if it must be."""
+    # Split on ordinary spaces only, so a no-break space keeps "92 km/h" whole.
+    words, out, cur = [w for w in re.split(r"[ \t\r\n]+", text) if w], [], ""
     for w in words:
         trial = (cur + " " + w).strip()
-        if d.textlength(trial, font=fnt) <= width:
+        if d.textlength(trial, font=fnt) <= width - (0 if out else first_indent):
             cur = trial
         else:
             if cur:
@@ -78,12 +84,8 @@ def wrap(d, text, fnt, width, lines):
     if cur:
         out.append(cur)
     if len(out) > lines:
-        out = out[: lines - 1] + [fit_text(d, " ".join(out[lines - 1 :]), fnt, width)]
-    return [fit_text(d, line, fnt, width) for line in out]
-
-
-def time12(dt):
-    return dt.strftime("%I:%M").lstrip("0") + dt.strftime(" %p").lower()
+        out = out[: lines - 1] + [" ".join(out[lines - 1 :])]
+    return [fit_text(d, line, fnt, width - (first_indent if i == 0 else 0)) for i, line in enumerate(out)]
 
 
 # ---------------------------------------------------------------- photo panel
@@ -190,60 +192,218 @@ def set_layout(photo_w):
     SIDE_W = W - SIDE_X - 14
 
 
+def _points(xy):
+    flat = []
+    for p in xy:
+        if isinstance(p, (tuple, list)):
+            flat.extend(p)
+        else:
+            flat.append(p)
+    return flat[0::2], flat[1::2]
+
+
+class Recorder:
+    """An ImageDraw stand-in that draws, and also notes the bounding box of
+    everything drawn under the current `section` name. draw_side returns those
+    boxes, so tests can prove nothing spills out of the panel or into the
+    caption."""
+
+    def __init__(self, canvas):
+        self._d = ImageDraw.Draw(canvas)
+        self.canvas = canvas
+        self.section = None
+        self.boxes = {}
+        self.texts = []  # (section, text, ink), in drawing order
+        self.marks = {}  # positions worth testing (the chart's now-marker)
+
+    def __getattr__(self, name):  # textlength, textbbox, ...
+        return getattr(self._d, name)
+
+    def note(self, x0, y0, x1, y1):
+        if self.section is None:
+            return
+        b = self.boxes.get(self.section)
+        self.boxes[self.section] = (x0, y0, x1, y1) if b is None else (
+            min(b[0], x0), min(b[1], y0), max(b[2], x1), max(b[3], y1))
+
+    def text(self, xy, text, fill=None, font=None, anchor=None, **kw):
+        self._d.text(xy, text, fill=fill, font=font, anchor=anchor, **kw)
+        self.texts.append((self.section, text, fill))
+        if text.strip():
+            self.note(*self._d.textbbox(xy, text, font=font, anchor=anchor, stroke_width=kw.get("stroke_width", 0)))
+
+    def _shape(self, name, xy, kw):
+        getattr(self._d, name)(xy, **kw)
+        xs, ys = _points(xy)
+        # Shapes cover their end pixels (+1 makes the box exclusive, like a
+        # text box). A thick line only grows across its run: a level rule
+        # gets taller, not longer.
+        half = (kw.get("width") or 1) / 2 if name == "line" else 0
+        grow_x = 0 if name == "line" and min(xs) != max(xs) and min(ys) == max(ys) else half
+        grow_y = 0 if name == "line" and min(ys) != max(ys) and min(xs) == max(xs) else half
+        self.note(min(xs) - grow_x, min(ys) - grow_y, max(xs) + 1 + grow_x, max(ys) + 1 + grow_y)
+
+    def line(self, xy, **kw):
+        self._shape("line", xy, kw)
+
+    def rectangle(self, xy, **kw):
+        self._shape("rectangle", xy, kw)
+
+    def rounded_rectangle(self, xy, **kw):
+        self._shape("rounded_rectangle", xy, kw)
+
+    def ellipse(self, xy, **kw):
+        self._shape("ellipse", xy, kw)
+
+    def polygon(self, xy, **kw):
+        self._shape("polygon", xy, kw)
+
+    def point(self, xy, **kw):
+        self._shape("point", xy, kw)
+
+
+def _ink_top(fnt, text):
+    """How far below the draw position a text's ink starts."""
+    return fnt.getbbox(text)[1]
+
+
+def _deg(t):
+    return f"{round(t)}°"
+
+
+def _clock(dt):
+    """'5:45am'."""
+    return dt.strftime("%I:%M").lstrip("0") + dt.strftime("%p").lower()
+
+
+CHART_MIN, CHART_MAX = 48, 130
+SUN_ROW_H = 32
+
+
 def draw_side(canvas, day_fc, *, now, poster_day, is_tomorrow, forecast, photo, cfg, warning=None, cond=None):
-    d = ImageDraw.Draw(canvas)
-    x = SIDE_X
-    y = 10
-    if is_tomorrow:
-        d.text((x, y), "TOMORROW", font=CB(13), fill=ORANGE)
-        y += 16
-    d.text((x, y), poster_day.strftime("%A"), font=BOLD(32), fill=BLACK)
-    y += 37
-    d.text((x, y), poster_day.strftime("%-d %B"), font=C(19), fill=BLACK)
-    y += 26
-    d.line([(x, y), (x + SIDE_W, y)], fill=BLACK, width=2)
-    y += 8
+    """The text panel, top to bottom: header (day, date, the day's icon and
+    one max/min pair), the forecast text, the coming hour and its facts, the
+    hourly chart (which takes whatever height is left), sun and moon, and the
+    caption (laid out bottom-up).
 
+    Returns the layout it used: the box of each section, the caption's top,
+    the chart's height and the ranked facts."""
+    d = Recorder(canvas)
+    x, y = SIDE_X, 10
+    y = _header(d, x, y, now=now, forecast=forecast, day_fc=day_fc, is_tomorrow=is_tomorrow, cfg=cfg)
+    d.section = "forecast"
     if day_fc is None:
-        d.text((x, y + 8), "No forecast yet", font=CB(20), fill=RED)
-        d.text((x, y + 36), "Waiting for Open-Meteo…", font=C(15), fill=BLACK)
-        y += 200
+        d.text((x, y + 4), "No forecast yet", font=CB(20), fill=RED)
+        d.text((x, y + 30), "Waiting for Open-Meteo…", font=C(15), fill=BLACK)
+        y += 52
     else:
-        y = _weather_block(d, day_fc, x, y)
-        y = _next_hour(d, forecast, x, y, now)
-        y = _hourly_chart(d, day_fc, x, y, now=None if is_tomorrow else now, height=56 if warning else 70)
-        if not warning:  # in map mode the room goes to the warnings
-            y = _sun_moon(d, day_fc, x, y, now=now, poster_day=poster_day, cfg=cfg)
+        y = _forecast_line(d, day_fc, x, y, is_tomorrow)
+    d.section = "rule"
+    d.line([(x, y + 5), (x + SIDE_W, y + 5)], fill=BLACK, width=2)
+    y += 13
 
-    _caption(d, photo, x, y, now=now, forecast=forecast, cfg=cfg, poster_day=poster_day, warning=warning, cond=cond)
+    coming = coming_hour(forecast, now, poster_day, is_tomorrow)
+    if coming is not None:
+        y = _hero(d, coming, x, y)
+        y = _facts_table(d, coming.facts[1:5], x, y + 4)
+
+    # Bottom-up: the caption first, then the sun row above it; the chart gets
+    # what is left between them and the facts, clamped to CHART_MIN..CHART_MAX.
+    lines = _caption_lines(d, photo, now=now, forecast=forecast, cfg=cfg, poster_day=poster_day, warning=warning, cond=cond)
+    sun_h = SUN_ROW_H + 6 if day_fc is not None else 0
+    chart_min = CHART_MIN + 8 if day_fc is not None else 0
+    kept = _fit_caption(lines, y + chart_min + sun_h)
+    if warning and sun_h and len(kept) < len(lines):
+        sun_h = 0  # in map mode the warnings outrank sunrise times
+        kept = _fit_caption(lines, y + chart_min)
+    cap_top = H - 6 - sum(f.size + 3 for _, f, _ in kept) - 4  # the caption's rule
+    bottom = cap_top - 5
+    if sun_h:
+        bottom -= sun_h
+        _sun_moon(d, day_fc, x, bottom + 5, now=now, poster_day=poster_day, cfg=cfg)
+    chart_h = 0
+    if day_fc is not None:
+        chart_h = max(CHART_MIN, min(CHART_MAX, int(bottom - (y + 8))))
+        _hourly_chart(d, day_fc, x, y + 8, SIDE_W, chart_h, now=None if is_tomorrow else now)
+    d.section = "caption"
+    _draw_caption(d, kept, x, cap_top)
+    return {"boxes": d.boxes, "texts": d.texts, "marks": d.marks, "caption_top": cap_top, "chart_h": chart_h, "sun_row": bool(sun_h),
+            "facts": coming.facts if coming else [], "caption_lines": len(kept), "caption_wanted": len(lines)}
 
 
-def _weather_block(d, fc, x, y):
-    icons.weather(d, fc.icon, x - 4, y, 84)
-    tx = x + 92
-    hi = f"{round(fc.t_max)}°"
-    d.text((tx, y - 6), hi, font=BOLD(50), fill=RED)
-    hw = d.textlength(hi, font=BOLD(50))
-    d.text((tx + hw + 6, y + 20), f"{round(fc.t_min)}°", font=BOLD(26), fill=BLUE)
-    # BOM's précis can be a sentence ("Shower or two. Possible storm."): wrap it.
-    lines = wrap(d, fc.label, C(15), SIDE_W - 92, 2)
+# ---------------------------------------------------------------- header
+
+DAY_FONTS = [(BOLD, 30), (BOLD, 28), (BOLD, 26), (CB, 28), (CB, 26), (CB, 24), (CB, 22), (CB, 20)]
+
+
+def header_icon_size(day_name):
+    """The day's icon steps down as the day name grows."""
+    return 40 if len(day_name) >= 9 else 48 if len(day_name) >= 8 else 56
+
+
+def lead_pair(now, forecast, day_fc, is_tomorrow, high_leads_from=9):
+    """((ink, temp, LABEL), (ink, temp, label) or None): the one max/min pair
+    the header shows. The big one is whichever extreme comes next."""
+    if is_tomorrow:  # from 6 pm the forecast is tomorrow's
+        return (BLUE, day_fc.t_min, "LOW TONIGHT"), (RED, day_fc.t_max, "high tomorrow")
+    if now.hour < high_leads_from:
+        return (BLUE, day_fc.t_min, "OVERNIGHT LOW"), (RED, day_fc.t_max, "high today")
+    tonight = forecast.day(now.date() + timedelta(days=1)) if forecast else None
+    return (RED, day_fc.t_max, "HIGH TODAY"), (None if tonight is None else (BLUE, tonight.t_min, "low tonight"))
+
+
+def _header(d, x, y, *, now, forecast, day_fc, is_tomorrow, cfg):
+    """Day name and date on the left (always today's: the date never moves in
+    the evening); on the right the forecast day's icon beside the big
+    extreme, and the other extreme in small type underneath both."""
+    d.section = "header"
+    name, date_s = now.strftime("%A"), now.strftime("%-d %B")
+    right = x + SIDE_W
+    block_w = other_w = 0
+    bottom = y
+    if day_fc is not None:
+        (ink, t, label), other = lead_pair(now, forecast, day_fc, is_tomorrow, cfg.high_leads_from)
+        size = header_icon_size(name)
+        num = _deg(t)
+        tw = max(d.textlength(label, font=CB(10)), d.textlength(num, font=BOLD(34)))
+        block_w = size + 4 + tw
+        d.section = "header.pair"
+        icons.weather(d, day_fc.icon, right - block_w, y, size)
+        d.text((right, y), label, font=CB(10), fill=ink, anchor="ra")
+        d.text((right, y + 13 - _ink_top(BOLD(34), num)), num, font=BOLD(34), fill=ink, anchor="ra")
+        oy = y + max(size, 13 + 36) + 2
+        if other is not None:
+            o_ink, o_t, o_label = other
+            val = _deg(o_t)
+            vw = d.textlength(val, font=CB(12))
+            lab = o_label + " "
+            other_w = vw + d.textlength(lab, font=C(12))
+            d.text((right - vw, oy), val, font=CB(12), fill=o_ink)
+            d.text((right - other_w, oy), lab, font=C(12), fill=BLACK)
+        bottom = oy + 15
+    d.section = "header.day"
+    avail = SIDE_W - max(block_w, other_w) - 6 if block_w else SIDE_W
+    face, size = next(((f, s) for f, s in DAY_FONTS if d.textlength(name, font=f(s)) <= avail), DAY_FONTS[-1])
+    d.text((x, y), fit_text(d, name, face(size), avail), font=face(size), fill=BLACK)
+    dy = y + size + 4
+    d.text((x, dy), fit_text(d, date_s, C(18), avail), font=C(18), fill=BLACK)
+    return max(bottom, dy + 22) + 1
+
+
+def _forecast_line(d, fc, x, y, is_tomorrow):
+    """BOM's précis across the full width, two lines at most; from 6 pm it is
+    tomorrow's, and says so."""
+    prefix = "Tomorrow: " if is_tomorrow else ""
+    indent = d.textlength(prefix, font=CB(14)) if prefix else 0
+    lines = wrap(d, fc.label, C(14), SIDE_W, 2, first_indent=indent)
+    if prefix:
+        d.text((x, y), prefix.strip(), font=CB(14), fill=ORANGE)
     for i, line in enumerate(lines):
-        d.text((tx, y + 50 + i * 17), line, font=C(15), fill=BLACK)
-    y += 88
-    rain = f"Rain {fc.rain_prob}%"
-    if fc.rain_text:  # BOM's range, e.g. "0 to 2 mm"
-        if fc.rain_text not in ("0 mm", "0 to 0 mm"):
-            rain += f" · {fc.rain_text}"
-    elif fc.rain_mm >= 0.2:
-        rain += f" · {fc.rain_mm:.0f} mm" if fc.rain_mm >= 1 else f" · {fc.rain_mm:.1f} mm"
-    d.text((x, y), rain, font=CB(15), fill=BLUE if fc.rain_prob >= 30 else BLACK)
-    rw = d.textlength(rain, font=CB(15))
-    uv = f"UV {fc.uv:.0f} {weather.uv_label(fc.uv)}"
-    if rw + 10 + d.textlength(uv, font=CB(15)) > SIDE_W:
-        uv = f"UV {fc.uv:.0f}"
-    uw = d.textlength(uv, font=CB(15))
-    d.text((x + SIDE_W - uw, y), uv, font=CB(15), fill=ORANGE if fc.uv >= 6 else BLACK)
-    return y + 22
+        d.text((x + (indent if i == 0 else 0), y + i * 17), line, font=C(14), fill=BLACK)
+    return y + max(1, len(lines)) * 17
+
+
+# ---------------------------------------------------------------- coming hour
 
 
 def _hour_label(h):
@@ -255,134 +415,239 @@ def _hour_label(h):
     return f"{a}{'' if ap == bp else ap}–{b}{bp}"
 
 
-def next_hour_items(hour):
-    """1-3 short (text, ink) pieces about the coming hour, most important
-    first: hail or storms, rain, strong wind, high UV; then, if there is
-    room, the conditions and the temperature."""
-    items = []
-    if hour.code in (96, 99):
-        items.append(("Hail", RED))
-    elif hour.code == 95:
-        items.append(("Storms", RED))
-    if hour.rain_mm >= 0.2:
-        mm = f"{hour.rain_mm:.0f}" if hour.rain_mm >= 1 else f"{hour.rain_mm:.1f}"
-        items.append((f"Rain {mm} mm", BLUE))
-    elif hour.rain_prob >= 50:
-        items.append((f"Rain likely {hour.rain_prob}%", BLUE))
-    if hour.gust >= 40 or hour.wind >= 30:
-        items.append((f"Windy {hour.wind:.0f}/{hour.gust:.0f} km/h", ORANGE))
-    if hour.uv >= 6:
-        items.append((f"UV {hour.uv:.0f}", ORANGE))
-    if not items:
-        items.append((weather.describe(hour.code)[0], BLACK))
-    items.append((f"{round(hour.temp)}°", BLACK))  # if there's room
-    return items[:3]
+def hour_icon(code):
+    return "hail" if code in facts_mod.HAIL else weather.describe(code)[1]
 
 
-def _next_hour(d, forecast, x, y, now):
-    """'5–6pm  Rain 2 mm · Windy 25/38 km/h · 22°' for the hour starting now."""
-    if forecast is None or now is None:
-        return y
-    nxt = now + __import__("datetime").timedelta(hours=1)
-    day = forecast.day(nxt.date())
-    hour = next((h for h in (day.hours if day else []) if h.hour == nxt.hour), None)
-    if hour is None:
-        return y
-    label = _hour_label(now.hour)
-    d.text((x, y), label, font=CB(15), fill=BLACK)
-    cx = x + d.textlength(label, font=CB(15)) + 8
-    line_y = y
-    for i, (text, ink) in enumerate(next_hour_items(hour)):
-        piece = ("· " if i else "") + text
-        w = d.textlength(piece + " ", font=C(15))
-        if cx + w > x + SIDE_W:  # wrap rather than clip
-            line_y += 18
-            cx = x + d.textlength(label, font=CB(15)) + 8
-            piece = text
-            w = d.textlength(piece + " ", font=C(15))
-        d.text((cx, line_y), piece, font=C(15), fill=ink)
-        cx += w
-    return line_y + 22
+HERO_ICON = 62
 
 
-def _hourly_chart(d, fc, x, y, now, height=70):
+def glue_units(text):
+    """No-break spaces before units, so a wrapped value never strands "mm"."""
+    return re.sub(r" (mm|km/h)\b", "\u00a0\\1", text)
+
+
+def _hero(d, coming, x, y):
+    """The coming hour's icon (never shrunk), its label over its temperature,
+    and the top fact right-aligned: value large, label small underneath."""
+    d.section = "hero"
+    hour = coming.hour
+    label = _hour_label(coming.label_hour).upper()
+    temp = _deg(hour.temp)
+    col_w = max(d.textlength(label, font=CB(13)), d.textlength(temp, font=BOLD(50)))
+    avail = SIDE_W - HERO_ICON - 4 - col_w - 8
+    if coming.facts:
+        top = coming.facts[0]
+        vf = CB(18 if top.score >= 50 else 16)
+        values = wrap(d, glue_units(top.value), vf, avail, 3)
+        small = top.label.lower() + (" · " + top.sub if top.sub else "")
+        notes = wrap(d, glue_units(small), C(12), avail, 2)
+        ink = top.ink
+    else:
+        vf = CB(16)
+        values, notes, ink = [weather.describe(hour.code)[0]], ["nothing unusual"], BLACK
+    vh = vf.size + 3
+    right_h = len(values) * vh + len(notes) * 14
+    col_h = 13 + 4 + 37
+    h = max(HERO_ICON, right_h, col_h)
+    icons.weather(d, hour_icon(hour.code), x, y + (h - HERO_ICON) // 2, HERO_ICON)
+    cx, cy = x + HERO_ICON + 4, y + (h - col_h) // 2
+    d.text((cx, cy - _ink_top(CB(13), label)), label, font=CB(13), fill=BLACK)
+    d.text((cx, cy + 17 - _ink_top(BOLD(50), temp)), temp, font=BOLD(50), fill=BLACK)
+    d.section = "hero.fact"
+    ry = y + (h - right_h) // 2
+    for v in values:
+        d.text((x + SIDE_W, ry), v, font=vf, fill=ink, anchor="ra")
+        ry += vh
+    for n in notes:
+        d.text((x + SIDE_W, ry), n, font=C(12), fill=BLACK, anchor="ra")
+        ry += 14
+    return y + h
+
+
+def _facts_table(d, rows, x, y):
+    """Two columns: label | value (· sub). Hazards read name | when."""
+    d.section = "facts"
+    right = x + SIDE_W
+    for f in rows:
+        base = y + 14  # one baseline per row, whatever the fonts
+        if f.hazard:
+            d.text((x, base), f.value, font=CB(15), fill=f.ink, anchor="ls")
+            d.text((right, base), f.label, font=C(13), fill=BLACK, anchor="rs")
+            y += 18
+            continue
+        vw = d.textlength(f.value, font=CB(15))
+        sub = f" · {f.sub}" if f.sub else ""
+        sw = d.textlength(sub, font=C(12)) if sub else 0
+        lw = d.textlength(f.label, font=C(13))
+        own_line = sub and lw + 8 + vw + sw > SIDE_W  # the sub-text drops to a line of its own
+        vx = right - vw - (0 if own_line else sw)
+        d.text((x, base), fit_text(d, f.label, C(13), vx - x - 8), font=C(13), fill=BLACK, anchor="ls")
+        d.text((vx, base), f.value, font=CB(15), fill=f.ink, anchor="ls")
+        if sub and not own_line:
+            d.text((vx + vw, base), sub, font=C(12), fill=BLACK, anchor="ls")
+        y += 18
+        if own_line:
+            d.text((right, y + 11), sub.lstrip(" ·"), font=C(12), fill=BLACK, anchor="rs")
+            y += 14
+    return y
+
+
+# ---------------------------------------------------------------- chart
+
+
+def _hourly_chart(d, fc, x, y, width, height, now):
+    """6 am to 9 pm: rain-chance bars under a temperature line. The top 22 px
+    are kept for labels; the bottom 16 px hold the hour labels."""
+    d.section = "chart"
     hours = [h for h in fc.hours if 6 <= h.hour <= 21]
-    top, width = y + 12, SIDE_W
-    base = top + height
     if len(hours) < 2:
-        return base + 22
-    n = len(hours)
-    step = width / n
+        return
+    n, step = len(hours), width / len(hours)
+    base = y + height - 16
     temps = [h.temp for h in hours]
+    probs = [max(0, min(100, h.rain_prob)) for h in hours]
     lo, hi = min(temps), max(temps)
     span = max(4.0, hi - lo)
-    lo -= (span - (hi - lo)) / 2
 
     def ty(t):
-        return base - 8 - (t - lo) / span * (height - 24)
+        return y + height - 18 - (t - lo) / span * (height - 40)
 
-    for i, h in enumerate(hours):
-        if h.rain_prob > 0:
-            bh = max(2, h.rain_prob / 100 * (height - 4))
+    def bar_top(p):
+        return base - (p / 100 * (height - 38) if p > 4 else 0)
+
+    def cx(i):
+        return x + (i + 0.5) * step
+
+    for i, p in enumerate(probs):
+        if p > 4:
             x0 = x + i * step + 2
-            d.rectangle([x0, base - bh, x0 + step - 4, base], fill=BLUE)
-    pts = [(x + (i + 0.5) * step, ty(h.temp)) for i, h in enumerate(hours)]
-    d.line(pts, fill=RED, width=4, joint="curve")
-    # Label the warmest and coolest hour.
-    i_hi = temps.index(max(temps))
-    i_lo = temps.index(min(temps))
-    i_now = None if now is None else now.hour - hours[0].hour
-    # The warmest label goes below the line when the now-marker sits on it.
-    for i, above in ((i_hi, i_hi != i_now), (i_lo, False)):
-        label = f"{round(temps[i])}°"
-        lw = d.textlength(label, font=CB(13))
-        lx = min(max(pts[i][0] - lw / 2, x), x + width - lw)
-        ly = pts[i][1] - 18 if above else pts[i][1] + 4
-        if not above and ly + 14 > base and i != i_hi:
-            ly = pts[i][1] - 18
-        if i == i_lo and i_lo == i_hi:
-            break
-        d.text((lx, ly), label, font=CB(13), fill=BLACK)
-    if now is not None and 6 <= now.hour <= 21:
-        i = now.hour - hours[0].hour
-        if 0 <= i < n:
-            nx = x + (i + 0.5) * step
-            for yy in range(int(top - 6), int(base), 6):
-                d.line([(nx, yy), (nx, yy + 3)], fill=BLACK, width=2)
-            d.polygon([(nx - 5, top - 10), (nx + 5, top - 10), (nx, top - 3)], fill=BLACK)
+            d.rectangle([x0, bar_top(p), x0 + step - 5, base], fill=BLUE)
+    d.line([(cx(i), ty(t)) for i, t in enumerate(temps)], fill=RED, width=4, joint="curve")
+    i_now = next((i for i, h in enumerate(hours) if now is not None and h.hour == now.hour), None)
+    if i_now is not None:
+        # Dashed, black over the paper and the line but white over a bar:
+        # pick the ink per pixel from what is already underneath.
+        nx = int(cx(i_now))
+        d.marks["now"] = (nx, int(y + 4), int(base))
+        for yy in range(int(y + 4), int(base)):
+            if (yy - int(y + 4)) % 6 < 3:
+                for xx in (nx - 1, nx):
+                    d.point((xx, yy), fill=WHITE if d.canvas.getpixel((xx, yy)) == BLUE else BLACK)
+        d.polygon([(nx - 5, y), (nx + 5, y), (nx, y + 7)], fill=BLACK)
     d.line([(x, base), (x + width, base)], fill=BLACK, width=2)
     for i, h in enumerate(hours):
         if h.hour % 3 == 0:
-            label = {0: "12a", 12: "12p"}.get(h.hour, f"{h.hour % 12}{'a' if h.hour < 12 else 'p'}")
-            lw = d.textlength(label, font=C(12))
-            d.text((x + (i + 0.5) * step - lw / 2, base + 2), label, font=C(12), fill=BLACK)
-    return base + 20
+            label = "12p" if h.hour == 12 else f"{h.hour % 12}{'a' if h.hour < 12 else 'p'}"
+            d.text((_clamp_x(d, cx(i), label, C(12), x, width), y + height - 3), label, font=C(12), fill=BLACK, anchor="ms")
+
+    # Labels: the extremes first (they matter most), then the rain labels.
+    # Each tries its own hour, then half a bar and then a whole bar to
+    # either side, wherever it is free. A rain label with
+    # nowhere free is left out. An extreme is never left out: boxed in above
+    # its point (the now-marker's arrowhead shares the top band), it tries
+    # the same steps just below the point, and failing that stays put,
+    # drawn last and outlined in white.
+    avoid = []
+    if i_now is not None:  # the marker's dashes and arrowhead
+        avoid += [(nx - 2, y, nx + 3, base), (nx - 6, y, nx + 7, y + 8)]
+    d.marks["labels"] = placed = []
+
+    def place(i, text, fnt, yy):
+        def box_at(px):
+            return d.textbbox((px, yy), text, font=fnt, anchor="ms", stroke_width=2)
+
+        home = _clamp_x(d, cx(i), text, fnt, x, width)
+        if not any(_overlap(box_at(home), o) for o in avoid):
+            return home, False
+        for shift in (0.5, 1.0):
+            for sign in (1, -1):  # whichever side is free
+                px = home + sign * shift * step
+                b = box_at(px)
+                if b[0] >= x and b[2] <= x + width + 1 and not any(_overlap(b, o) for o in avoid):
+                    return px, True
+        return None, True
+
+    def keep(text, fnt, px, yy):
+        b = d.textbbox((px, yy), text, font=fnt, anchor="ms", stroke_width=2)
+        avoid.append(b)
+        placed.append((text, b))
+
+    i_lo, i_hi = temps.index(lo), temps.index(hi)
+    extremes = []
+    for i, t, yy, ink in ((i_lo, _deg(lo), ty(lo) - 6, BLUE), (i_hi, _deg(hi), ty(hi) - 6, RED)):
+        px, _ = place(i, t, CB(13), yy)
+        if px is None:
+            below = yy + 6 + 19  # the label's top just under the line
+            px, _ = place(i, t, CB(13), below)
+            yy = below if px is not None else yy
+        px = _clamp_x(d, cx(i), t, CB(13), x, width) if px is None else px
+        keep(t, CB(13), px, yy)
+        extremes.append((t, px, yy, ink))
+    # Rain: the wettest and the driest hour, each only where a bar is drawn.
+    p_max, p_min = max(probs), min(probs)
+    wanted = [probs.index(p_max)] if p_max > 4 else []
+    if p_min > 4 and probs.index(p_min) not in wanted:
+        wanted.append(probs.index(p_min))
+    for i in wanted:
+        p = probs[i]
+        text = f"{p}%"
+        inside = base - bar_top(p) >= 14  # white inside the bar's top, else blue above it
+        yy = bar_top(p) + 10 if inside else bar_top(p) - 3
+        px, moved = place(i, text, CB(10), yy)
+        if px is None:
+            continue
+        keep(text, CB(10), px, yy)
+        if inside and not moved:
+            # White on its bar. A label is wider than a bar, so a blue halo
+            # carries the white past the bar's edges instead of losing them.
+            d.text((px, yy), text, font=CB(10), fill=WHITE, anchor="ms", stroke_width=2, stroke_fill=BLUE)
+        else:  # above its bar, or nudged off it: blue, outlined so it reads on paper or bar
+            d.text((px, yy), text, font=CB(10), fill=BLUE, anchor="ms", stroke_width=2, stroke_fill=WHITE)
+    for t, px, yy, ink in extremes:
+        d.text((px, yy), t, font=CB(13), fill=ink, anchor="ms", stroke_width=2, stroke_fill=WHITE)
 
 
-def _sun_moon(d, fc, x, y, *, now, poster_day, cfg, moon=True):
+def _overlap(a, b):
+    return a[0] < b[2] and b[0] < a[2] and a[1] < b[3] and b[1] < a[3]
+
+
+def _clamp_x(d, centre, text, fnt, x, width):
+    """A centred label's centre, nudged so the label stays inside [x, x + width]."""
+    half = d.textlength(text, font=fnt) / 2 + 2
+    return min(max(centre, x + half), x + width - half)
+
+
+# ---------------------------------------------------------------- sun and moon
+
+
+def _sun_moon(d, fc, x, y, *, now, poster_day, cfg):
+    """A thin rule, then '↑5:45am ↓7:35pm' over the day length on the left,
+    and the moon's phase on the right, drawn as it looks from this hemisphere."""
+    d.section = "sun"
     d.line([(x, y), (x + SIDE_W, y)], fill=BLACK, width=1)
-    y += 6
-    icons.sun(d, x + 10, y + 10, 7, rays=False)
-    d.text((x + 26, y), f"{time12(fc.sunrise)} – {time12(fc.sunset)}", font=CB(16), fill=BLACK)
-    daylight = fc.sunset - fc.sunrise
-    hrs, mins = divmod(int(daylight.total_seconds() // 60), 60)
-    span = f"{hrs}h {mins:02d}m"
-    d.text((x + SIDE_W - d.textlength(span, font=C(14)), y + 2), span, font=C(14), fill=BLACK)
-    y += 22
-    if not moon:
-        return y
+    y += 5
+    # DejaVu has a ☀, but as a glyph it can only be one ink: draw the sun.
+    icons.sun(d, x + 6, y + 8, 4, ray=(2, 5), ray_w=2, outline=1)
+    d.text((x + 16, y), f"↑{_clock(fc.sunrise)} ↓{_clock(fc.sunset)}", font=CB(14), fill=BLACK)
+    hrs, mins = divmod(int((fc.sunset - fc.sunrise).total_seconds() // 60), 60)
+    d.text((x, y + 17), f"{hrs}h {mins:02d}m daylight", font=C(12), fill=BLACK)
     moment = datetime.combine(poster_day, datetime.min.time()).replace(hour=21, tzinfo=now.tzinfo)
     phase = astro.moon_phase(moment)
-    icons.moon(d, x + 10, y + 10, 8, phase, southern=cfg.latitude < 0)
-    pct = round(astro.illumination(phase) * 100)
-    d.text((x + 26, y + 1), f"{astro.phase_name(phase)} · {pct}% lit", font=C(14), fill=BLACK)
-    return y + 22
+    r = 13
+    icons.moon(d, x + SIDE_W - r - 1, y + 14, r, phase, southern=cfg.latitude < 0)
+    for i, word in enumerate(astro.phase_name(phase).split(" ", 1)):
+        d.text((x + SIDE_W - 2 * r - 8, y + 1 + i * 14), word, font=C(13), fill=BLACK, anchor="ra")
 
 
-def _caption(d, photo, x, y_min, *, now, forecast, cfg, poster_day=None, warning=None, cond=None):
-    """The picture's caption, the source stamp, and in map mode the list of
-    warnings in force (instead of badges over the map)."""
-    lines = []  # (text, font, ink)
+# ---------------------------------------------------------------- caption
+
+
+def _caption_lines(d, photo, *, now, forecast, cfg, poster_day=None, warning=None, cond=None):
+    """(text, font, ink) lines for the picture's caption, the source stamp,
+    and in map mode the list of warnings in force (instead of badges over the
+    map)."""
+    lines = []
     if warning:
         for t in wrap(d, warning["title"], CB(15), SIDE_W, 2):
             lines.append((t, CB(15), RED))
@@ -410,17 +675,25 @@ def _caption(d, photo, x, y_min, *, now, forecast, cfg, poster_day=None, warning
             age = "a day" if age_h >= 24 else "12 h" if age_h >= 12 else "3 h"
             stamp, colour = f"{cfg.place} · forecast over {age} old", RED
     lines.append((stamp, C(11), colour))
+    return lines
 
-    heights = [f.size + 3 for _, f, _ in lines]
-    # Bottom-aligned; drop caption lines from the end of the warnings list
-    # rather than overlap the panel above.
-    while len(lines) > 2 and H - 6 - sum(heights) < y_min + 4:
-        del lines[-2], heights[-2]
-    y = H - 6 - sum(heights)
-    d.line([(x, y - 4), (x + SIDE_W, y - 4)], fill=BLACK, width=1)
-    for (text, f, ink), h in zip(lines, heights):
+
+def _fit_caption(lines, y_min):
+    """Bottom-aligned; drop lines from the end of the warnings list (never
+    the stamp) rather than overlap the panel above y_min."""
+    lines = list(lines)
+    while len(lines) > 2 and H - 6 - sum(f.size + 3 for _, f, _ in lines) - 4 < y_min + 4:
+        del lines[-2]
+    return lines
+
+
+def _draw_caption(d, lines, x, rule_y):
+    d.line([(x, rule_y), (x + SIDE_W, rule_y)], fill=BLACK, width=1)
+    y = rule_y + 4
+    for text, f, ink in lines:
         d.text((x, y), text, font=f, fill=ink)
-        y += h
+        y += f.size + 3
+
 
 
 _LEVEL_WORDS = {"emergency": "emergency warning", "watch": "watch and act", "advice": "advice"}
@@ -548,7 +821,9 @@ def draw_badges(canvas, cond, x=12, y=12):
         y += h + (6 if badge.small else 10)
 
 
-def render(*, now, poster_day, is_tomorrow, forecast, photo, cfg, cond=None):
+def render(*, now, poster_day, is_tomorrow, forecast, photo, cfg, cond=None, layout=None):
+    """The poster. Pass a dict as `layout` to get back what draw_side used
+    (section boxes, the caption's top, the facts)."""
     canvas = new_canvas((W, H), WHITE)
     warning = getattr(cond, "warning", None) if cond else None
     set_layout(500)
@@ -564,6 +839,8 @@ def render(*, now, poster_day, is_tomorrow, forecast, photo, cfg, cond=None):
         draw_photo(canvas, photo)
         draw_badges(canvas, cond)  # over a map, warnings are listed in the text panel instead
     day_fc = forecast.day(poster_day) if forecast else None
-    draw_side(canvas, day_fc, now=now, poster_day=poster_day, is_tomorrow=is_tomorrow, forecast=forecast, photo=photo, cfg=cfg,
+    used = draw_side(canvas, day_fc, now=now, poster_day=poster_day, is_tomorrow=is_tomorrow, forecast=forecast, photo=photo, cfg=cfg,
               warning=warning, cond=cond)
+    if layout is not None:
+        layout.update(used, side=(SIDE_X, SIDE_W), photo_w=PHOTO_W)
     return canvas

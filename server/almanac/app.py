@@ -22,7 +22,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 from zoneinfo import ZoneInfo
 
-from . import bom, conditions, photos
+from . import bom, conditions, facts, photos
 from . import schedule, weather
 from .config import Config
 from .palette import to_preview
@@ -58,6 +58,8 @@ class Almanac:
         except (OSError, ValueError):
             self.last_seen = None
         self.on_change = []  # callbacks run after /shuffle (USB mode pushes at once)
+        self._held_fact = None  # (since, minutes, id, drawn state, slot): see _fact_alert
+        self._held_lock = threading.Lock()
 
     # -- shuffle state survives restarts, resets each day
     def _shuffle_path(self):
@@ -94,26 +96,34 @@ class Almanac:
             return datetime.fromisoformat(at).replace(tzinfo=self.tz)
         return datetime.now(self.tz)
 
+    def forecast(self):
+        """Open-Meteo's forecast with BOM's official daily numbers over it.
+        Cache-only (the loaders read disk caches), so cheap enough for the
+        frame's alert poll."""
+        forecast = self._weather()
+        if forecast is not None:
+            try:  # BOM's official daily numbers over Open-Meteo's (optional)
+                days = self._bom()
+                for d, b in days.items():
+                    bom.overlay(forecast.day(d), b)
+            except Exception as e:
+                print(f"BOM overlay failed: {e!r}", flush=True)
+        return forecast
+
     def poster(self, now):
         """Render (or reuse this hour's render of) the poster for `now`."""
         day, is_tomorrow = schedule.poster_day(now, self.cfg.tomorrow_from_hour)
         shuffle = self.shuffle_count(day)
-        cond = self.conditions(day, is_tomorrow, now)
-        # The alert is part of the key: a warning issued mid-hour must make a
-        # new poster now, not at the next slot.
-        key = (schedule.slot(now), day, shuffle, cond.alert if cond else "")
+        forecast = self.forecast()
+        cond, alert = self._alert(now, day, is_tomorrow, forecast)
+        # The alert is part of the key: a warning issued mid-hour (or an
+        # urgent fact about the coming hour) must make a new poster now, not
+        # at the next slot.
+        key = (schedule.slot(now), day, shuffle, alert)
         with self._lock:
             hit = self._cache.get(key)
             if hit:
                 return hit
-            forecast = self._weather()
-            if forecast is not None:
-                try:  # BOM's official daily numbers over Open-Meteo's (optional)
-                    days = self._bom()
-                    for d, b in days.items():
-                        bom.overlay(forecast.day(d), b)
-                except Exception as e:
-                    print(f"BOM overlay failed: {e!r}", flush=True)
             photo = self._photo(day, shuffle)
             canvas = render(now=now, poster_day=day, is_tomorrow=is_tomorrow, forecast=forecast, photo=photo, cfg=self.cfg, cond=cond)
             buf = io.BytesIO()
@@ -125,7 +135,7 @@ class Almanac:
                 "hash": hashlib.sha256(png).hexdigest()[:16],
                 "photo": None if photo is None else f"{photo.title} ({photo.credit})",
                 "conditions": cond,
-                "alert": cond.alert if cond else "",
+                "alert": alert,
                 "day": day.isoformat(),
                 "tomorrow": is_tomorrow,
                 "rendered_at": time.time(),
@@ -147,8 +157,69 @@ class Almanac:
     def alert(self, now):
         """The current alert id: cheap, cache-only (what the frame polls)."""
         day, is_tomorrow = schedule.poster_day(now, self.cfg.tomorrow_from_hour)
+        return self._alert(now, day, is_tomorrow, self.forecast())[1]
+
+    def _alert(self, now, day, is_tomorrow, forecast):
+        """(conditions, alert id). The id joins the specific hazards' id with
+        "wx:<digest>" while the coming hour has a fact worth re-checking for
+        (see _fact_alert), so the frame's existing /alert.json poll redraws
+        when what the panel would show changes, under the warning rules (a
+        first alert or a clear redraws at once; any other change at most
+        every 10 minutes)."""
         cond = self.conditions(day, is_tomorrow, now)
-        return cond.alert if cond else ""
+        parts = [cond.alert if cond else "", self._fact_alert(now, day, is_tomorrow, forecast)]
+        return cond, "+".join(p for p in parts if p)
+
+    def _fact_alert(self, now, day, is_tomorrow, forecast):
+        """"wx:<digest>" while a re-check tier applies (facts.refresh_minutes:
+        10, 15 or 30 minutes by the top fact's score), or "" when none does
+        (the hourly refresh covers it).
+
+        The id is re-decided at most once per tier interval and held in
+        between, whatever the data does. The frame redraws at once on a
+        first alert *and* on a clear, so letting a dropped tier or a vanished
+        fact clear mid-interval would cost a clear-then-raise pair of
+        redraws. A *higher* tier is noticed sooner: the hold lasts the
+        shorter of the held tier's interval and the current one's.
+
+        At a re-check the id changes only when the facts shown differ enough
+        from the ones last drawn (facts.worth_redrawing); otherwise it is
+        deferred to the hourly refresh. The hourly poster redraws everything,
+        so the first re-check in a new hour takes the current facts as the
+        drawn state."""
+        try:
+            coming = facts.coming_hour(forecast, now, day, is_tomorrow)
+            minutes = facts.refresh_minutes(coming)
+        except Exception as e:  # facts are optional; never let them take the poster down
+            print(f"facts failed: {e!r}", flush=True)
+            coming, minutes = None, None
+        t, slot = now.timestamp(), schedule.slot(now)
+        with self._held_lock:
+            held = self._held_fact  # (since, minutes, id, drawn state, slot)
+            if held:
+                window = min(held[1], minutes or held[1]) * 60
+                if t - held[0] < window:
+                    return held[2]
+            if minutes is None:
+                self._held_fact = None
+                return ""
+            state = facts.shown_state(coming)
+            if held is None or facts.worth_redrawing(held[3], state):
+                self._held_fact = (t, minutes, "wx:" + facts.digest(coming), state, slot)
+            elif held[4] != slot:  # the hourly redraw drew the current facts
+                self._held_fact = (t, minutes, held[2], state, slot)
+            else:  # roughly the same as drawn: defer
+                self._held_fact = (t, minutes, held[2], held[3], slot)
+            return self._held_fact[2]
+
+    def weather_ttl(self, now_ts=None):
+        """How old the forecast may get before the feed refresher fetches it
+        again: weather.TTL_SECONDS normally, shorter while a re-check tier is
+        active so the tier never re-reads data older than its own interval."""
+        held = self._held_fact
+        if not held:
+            return weather.TTL_SECONDS
+        return min(weather.TTL_SECONDS, held[1] * 60 - 60)  # a minute's slack for the 5-minute refresher
 
     def by_hash(self, digest):
         # No lock: a render in progress can hold it for a while, and list() of
@@ -300,7 +371,7 @@ def main():
         now = app.now()
         day, tomorrow = schedule.poster_day(now, cfg.tomorrow_from_hour)
         for name, job in (
-            ("weather", lambda: weather.load(cfg)),
+            ("weather", lambda: weather.load(cfg, ttl=app.weather_ttl())),
             ("bom", lambda: conditions.load_bom_days(cfg)),
             ("conditions", lambda: conditions.load(cfg, day, tomorrow)),
             ("photo", lambda: photos.photo_for(cfg, day, app.shuffle_count(day))),
