@@ -70,6 +70,7 @@ class Observed:
     southerly_here: Optional[Southerly] = None
     southerly_coast: Optional[Southerly] = None
     source: str = ""  # e.g. "BOM"
+    temp: Optional[float] = None  # air temperature at `at`, °C
 
 
 def _usable(log, now):
@@ -171,6 +172,7 @@ def summarise(logs, now):
         last_hr_mm=rain_last_hour(log, now),
         southerly_here=s_here,
         southerly_coast=s_coast,
+        temp=last.temp,
     )
 
 

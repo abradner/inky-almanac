@@ -27,7 +27,8 @@ credits the photographer and licence.
 - **BOM's official forecast** for your town: the forecast text (*"Shower or
   two. Possible storm"*) and one pair of extremes, led by whichever comes
   next: the overnight low before 9 am, today's high until 6 pm, then
-  tonight's low.
+  tonight's low. After the forecast text comes the day's chance of rain and
+  BOM's rain range ("80% · 2–8 mm"), in blue from 30%.
 - **The coming hour**, large: its sky, its temperature, and the most unusual
   thing about it, with up to four more facts underneath. Facts are ranked by
   how far out of the ordinary they are: hail and storms first, then heavy
@@ -116,6 +117,7 @@ poster.
 | `server/almanac/domain.py` | the plain data every provider produces: `Forecast`, `Day`, `Hour`, `DayOutlook`, `Reading`, `StationLogs`, `MapImage`, `FireDanger`, `AirQualityHour`, `Photo` |
 | `server/almanac/hazards.py` | the `Hazard` type, its ranking and identity, and distance from home |
 | `server/almanac/facts.py` | the coming hour's facts and their scores (pure) |
+| `server/almanac/anchor.py` | anchors the model's hourly temperatures to the official outlook's max and min (pure) |
 | `server/almanac/observed.py` | rain since 9 am and in the last hour, and southerly changes, from station logs (pure) |
 | `server/almanac/normals.py` | the `Normals` interface the fact scorer reads; defaults to the configured normals provider |
 | `server/almanac/conditions.py` | gathers fire danger, air quality, hazards and the warning map into one `Conditions` |
@@ -261,6 +263,31 @@ own table or to deliver ink-ready images.
 To add a badge, add it in `render.badges_for`. Use the inks that mean
 something (`palette.py`), and keep the text free of numbers that drift. Every
 change to the picture costs a 40-second refresh.
+
+## Which source wins
+
+Where more than one source gives a figure, the poster uses the most
+authoritative one that has it:
+
+| Rank | Source | Figures it supplies |
+|---|---|---|
+| 1 | Observed: the BOM station (Horsley Park AWS by default) | rain since 9 am and in the last hour; the coming hour's temperature, from a reading under 30 minutes old; a southerly change it has seen |
+| 2 | BOM forecast: the town précis (IDN11060) | the day's max and min, forecast text, icon and chance of rain |
+| 3 | Model: Open-Meteo | everything hourly (temperature curve, rain-chance bars, wind, UV), sun times, and any daily figure BOM leaves out |
+
+The model's hourly temperatures are anchored to BOM's figures
+(`anchor.py`), so the chart, the coming hour and the "vs normal" fact agree
+with the header. The model's peak between 6 am and 9 pm becomes BOM's max
+and its trough between midnight and 9 am becomes BOM's min; temperatures in
+between map linearly, so the curve keeps the model's timing. With only one
+of BOM's figures (BOM drops today's min after the morning), the curve shifts
+to match that one. The rain-chance bars stay the model's, because BOM
+publishes no free hourly product. The day's rain on the forecast line
+("· 80% · 2–8 mm") is BOM's chance of any rain and its range; with no BOM
+outlook the line shows no rain figure rather than the model's.
+
+The poster labels none of this: an observed temperature and a forecast one
+look the same.
 
 ## Station observations
 
