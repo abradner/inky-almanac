@@ -22,7 +22,13 @@ from . import weather
 from .palette import BLACK, BLUE, ORANGE, RED
 
 # Re-check tiers: (lowest top-fact score, minutes between re-checks).
-REFRESH_TIERS = ((90, 5), (75, 15), (50, 30))
+# A redraw takes the panel ~40 s, so nothing re-checks more often than the
+# frame's own 10-minute cap on alert redraws.
+REFRESH_TIERS = ((90, 10), (75, 15), (50, 30))
+# At a re-check, a displayed fact's score must have moved by more than this
+# since it was drawn to be worth a redraw: worse news sooner than better.
+WORSE_BY = 5
+BETTER_BY = 10
 NON_HAZARD_CAP = 89  # hail (100) and storms (90) always outrank everything else
 
 HAIL, STORMS = (96, 99), (95,)
@@ -245,7 +251,7 @@ def coming_hour(forecast, now, poster_day, is_tomorrow, normals=None):
 
 
 def refresh_minutes(coming):
-    """How often to re-check the coming hour: 5, 15 or 30 minutes by the top
+    """How often to re-check the coming hour: 10, 15 or 30 minutes by the top
     fact's score, or None for the ordinary hourly refresh."""
     top = coming.facts[0].score if coming and coming.facts else 0
     return next((minutes for floor, minutes in REFRESH_TIERS if top >= floor), None)
@@ -254,11 +260,29 @@ def refresh_minutes(coming):
 SHOWN_FACTS = 5  # the hero fact and up to four table rows
 
 
+def shown_state(coming):
+    """[(kind, score)] of the facts the panel shows, hero first."""
+    return [(f.key, f.score) for f in (coming.facts if coming else [])[:SHOWN_FACTS]]
+
+
+def worth_redrawing(drawn, now):
+    """Whether the facts shown have changed enough since `drawn` (both
+    shown_state lists) to redraw before the hour: a fact appeared or went,
+    the hero is a different kind, or a score rose by more than WORSE_BY or
+    fell by more than BETTER_BY. Anything less (a few mm, a few km/h) waits
+    for the hourly refresh."""
+    if {k for k, _ in drawn} != {k for k, _ in now}:
+        return True
+    if drawn and now and drawn[0][0] != now[0][0]:
+        return True
+    before = dict(drawn)
+    return any(s - before[k] > WORSE_BY or before[k] - s > BETTER_BY for k, s in now)
+
+
 def digest(coming):
     """A short fingerprint of the facts the panel shows (the hero fact and the
-    table rows: label, value, sub-text). Equal digests mean nothing worth a
-    redraw changed."""
+    table rows: kind, score, label, value, sub-text)."""
     import hashlib
 
-    shown = [(f.label, f.value, f.sub) for f in (coming.facts if coming else [])[:SHOWN_FACTS]]
+    shown = [(f.key, f.score, f.label, f.value, f.sub) for f in (coming.facts if coming else [])[:SHOWN_FACTS]]
     return hashlib.sha256(repr(shown).encode()).hexdigest()[:8]

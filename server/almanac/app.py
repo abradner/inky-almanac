@@ -58,7 +58,7 @@ class Almanac:
         except (OSError, ValueError):
             self.last_seen = None
         self.on_change = []  # callbacks run after /shuffle (USB mode pushes at once)
-        self._held_fact = None  # (since, minutes, "wx:<digest>"): see _fact_alert
+        self._held_fact = None  # (since, minutes, id, drawn state, slot): see _fact_alert
         self._held_lock = threading.Lock()
 
     # -- shuffle state survives restarts, resets each day
@@ -171,27 +171,31 @@ class Almanac:
         return cond, "+".join(p for p in parts if p)
 
     def _fact_alert(self, now, day, is_tomorrow, forecast):
-        """"wx:<digest of the facts shown>", re-checked at most once per tier
-        interval (facts.refresh_minutes: 5, 15 or 30 minutes by the top
-        fact's score), or "" when no tier applies (the hourly refresh covers
-        it).
+        """"wx:<digest>" while a re-check tier applies (facts.refresh_minutes:
+        10, 15 or 30 minutes by the top fact's score), or "" when none does
+        (the hourly refresh covers it).
 
-        Between re-checks the last answer is held, whatever the data does.
-        The frame redraws at once on a first alert *and* on a clear, so
-        letting a dropped tier or a vanished fact clear mid-interval would
-        cost a clear-then-raise pair of redraws. A *higher* tier is noticed
-        sooner: the hold lasts the shorter of the held tier's interval and
-        the current one's. An unchanged digest is an unchanged id: no
-        redraw."""
+        The id is re-decided at most once per tier interval and held in
+        between, whatever the data does. The frame redraws at once on a
+        first alert *and* on a clear, so letting a dropped tier or a vanished
+        fact clear mid-interval would cost a clear-then-raise pair of
+        redraws. A *higher* tier is noticed sooner: the hold lasts the
+        shorter of the held tier's interval and the current one's.
+
+        At a re-check the id changes only when the facts shown differ enough
+        from the ones last drawn (facts.worth_redrawing); otherwise it is
+        deferred to the hourly refresh. The hourly poster redraws everything,
+        so the first re-check in a new hour takes the current facts as the
+        drawn state."""
         try:
             coming = facts.coming_hour(forecast, now, day, is_tomorrow)
             minutes = facts.refresh_minutes(coming)
         except Exception as e:  # facts are optional; never let them take the poster down
             print(f"facts failed: {e!r}", flush=True)
             coming, minutes = None, None
-        t = now.timestamp()
+        t, slot = now.timestamp(), schedule.slot(now)
         with self._held_lock:
-            held = self._held_fact  # (since, minutes, id)
+            held = self._held_fact  # (since, minutes, id, drawn state, slot)
             if held:
                 window = min(held[1], minutes or held[1]) * 60
                 if t - held[0] < window:
@@ -199,7 +203,13 @@ class Almanac:
             if minutes is None:
                 self._held_fact = None
                 return ""
-            self._held_fact = (t, minutes, "wx:" + facts.digest(coming))
+            state = facts.shown_state(coming)
+            if held is None or facts.worth_redrawing(held[3], state):
+                self._held_fact = (t, minutes, "wx:" + facts.digest(coming), state, slot)
+            elif held[4] != slot:  # the hourly redraw drew the current facts
+                self._held_fact = (t, minutes, held[2], state, slot)
+            else:  # roughly the same as drawn: defer
+                self._held_fact = (t, minutes, held[2], held[3], slot)
             return self._held_fact[2]
 
     def weather_ttl(self, now_ts=None):

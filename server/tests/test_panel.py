@@ -415,7 +415,7 @@ def app_for(tmp_path, state):
 QUIET = preset("morning")  # 7:01, nothing scores
 TIER30 = dict(QUIET, rainP=90)  # rain by chance: 54
 TIER15 = dict(QUIET, rainP=90, rainMm=5)  # 80
-TIER5 = dict(QUIET, cond="hail", rainP=90)  # hail: 100
+TIER10 = dict(QUIET, cond="hail", rainP=90)  # hail 100, rain 54
 T0 = now_of(QUIET)
 
 
@@ -439,11 +439,11 @@ def test_a_tier_raises_the_alert_at_once(tmp_path):
 
 
 @pytest.mark.parametrize("tier, changed, minutes", [
-    (TIER5, dict(TIER5, rainP=95), 5),
-    (TIER15, dict(TIER15, rainMm=6), 15),
-    (TIER30, dict(TIER30, rainP=95), 30),
+    (TIER10, dict(TIER10, rainMm=5), 10),  # rain 54 -> 80
+    (TIER15, dict(TIER15, gust=60, wind=20), 15),  # wind appears
+    (TIER30, dict(TIER30, rainP=100), 30),  # rain 54 -> 60: +6
 ])
-def test_a_changed_digest_waits_for_the_tiers_interval(tmp_path, tier, changed, minutes):
+def test_a_real_change_waits_for_the_tiers_interval(tmp_path, tier, changed, minutes):
     state = {"s": tier}
     app = app_for(tmp_path, state)
     first = app.alert(at(0))
@@ -454,12 +454,60 @@ def test_a_changed_digest_waits_for_the_tiers_interval(tmp_path, tier, changed, 
     assert later.startswith("wx:") and later != first  # re-checked
 
 
-def test_an_unchanged_digest_keeps_the_id(tmp_path):
-    state = {"s": TIER30}
+def test_small_changes_defer_to_the_hour(tmp_path):
+    state = {"s": TIER10}  # hail 100 leads (10-minute checks); rain 90% -> 54 drawn
     app = app_for(tmp_path, state)
     first = app.alert(at(0))
-    state["s"] = dict(TIER30, tMin=12, tMax=25)  # temperatures move; the facts shown don't
-    assert app.alert(at(31)) == first  # re-checked after the interval: same digest, same id
+    state["s"] = dict(TIER10, rainP=95)  # "95% · 0.0 mm": shown differently, scores 57 (+3)
+    assert app.alert(at(10)) == first
+    state["s"] = dict(TIER10, rainP=99)  # 59: +5 on what was drawn (not on the last check)
+    assert app.alert(at(20)) == first
+    state["s"] = dict(TIER10, rainP=100)  # 60: +6
+    assert app.alert(at(30)) != first
+
+
+def test_a_deferred_check_still_starts_a_new_interval(tmp_path):
+    state = {"s": TIER10}
+    app = app_for(tmp_path, state)
+    first = app.alert(at(0))
+    state["s"] = dict(TIER10, rainP=95)  # small: deferred at the 10-minute check
+    assert app.alert(at(10)) == first
+    state["s"] = dict(TIER10, rainMm=5)  # a real change a minute later...
+    assert app.alert(at(11)) == first
+    assert app.alert(at(19)) == first  # ...waits for the next check
+    assert app.alert(at(20)) != first
+
+
+def test_better_news_needs_a_bigger_move(tmp_path):
+    state = {"s": TIER15}  # rain 5 mm -> 80
+    app = app_for(tmp_path, state)
+    first = app.alert(at(0))
+    state["s"] = dict(TIER15, rainMm=3.8)  # 70: -10, still a tier
+    assert app.alert(at(15)) == first
+    state["s"] = dict(TIER15, rainMm=3.5)  # 68: -12
+    assert app.alert(at(45)) != first
+
+
+def test_a_vanished_fact_or_a_new_hero_redraws(tmp_path):
+    state = {"s": TIER10}  # hail, rain
+    app = app_for(tmp_path, state)
+    first = app.alert(at(0))
+    state["s"] = dict(TIER10, rainP=10)  # rain goes; hail stays
+    gone = app.alert(at(10))
+    assert gone != first
+    state["s"] = dict(TIER10, rainP=10, cond="storm")  # hail -> storms
+    assert app.alert(at(20)) != gone
+
+
+def test_the_hourly_redraw_resets_what_was_drawn(tmp_path):
+    state = {"s": TIER30}  # 54 drawn at 7:01
+    app = app_for(tmp_path, state)
+    first = app.alert(at(0))
+    eight = dict(TIER30, hour=8, rainP=95)  # 57 at the 8:01 poster
+    state["s"] = eight
+    assert app.alert(at(60)) == first  # same kinds, +3: no early redraw, but 57 is now "drawn"
+    state["s"] = dict(eight, rainP=100)  # 60: +3 on 57 (it would be +6 on the old 54)
+    assert app.alert(at(90)) == first
 
 
 def test_a_tier_that_drops_mid_interval_does_not_flicker(tmp_path):
@@ -478,9 +526,9 @@ def test_a_higher_tier_is_noticed_at_its_own_pace(tmp_path):
     state = {"s": TIER30}
     app = app_for(tmp_path, state)
     first = app.alert(at(0))
-    state["s"] = TIER5
-    assert app.alert(at(4)) == first
-    assert app.alert(at(5)) != first  # five minutes, not thirty
+    state["s"] = TIER10
+    assert app.alert(at(9)) == first
+    assert app.alert(at(10)) != first  # ten minutes, not thirty
 
 
 def test_alert_joins_hazards_and_the_digest(tmp_path):
@@ -501,7 +549,7 @@ def test_a_tier_mid_hour_makes_a_new_poster(tmp_path):
     state = {"s": QUIET}
     app = app_for(tmp_path, state)
     before = app.frame_info(at(0))
-    state["s"] = TIER5
+    state["s"] = TIER10
     after = app.frame_info(at(29))  # the same hour slot
     assert after["alert"].startswith("wx:") and after["hash"] != before["hash"]
 
@@ -510,7 +558,7 @@ def test_the_forecast_refreshes_as_often_as_the_tier(tmp_path):
     state = {"s": QUIET}
     app = app_for(tmp_path, state)
     assert app.weather_ttl() == weather.TTL_SECONDS
-    for tier, ttl in ((TIER30, weather.TTL_SECONDS), (TIER15, 14 * 60), (TIER5, 4 * 60)):  # each a minute under its tier
+    for tier, ttl in ((TIER30, weather.TTL_SECONDS), (TIER15, 14 * 60), (TIER10, 9 * 60)):  # each a minute under its tier
         app._held_fact = None
         state["s"] = tier
         app.alert(at(0))
