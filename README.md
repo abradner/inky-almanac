@@ -264,13 +264,14 @@ NORMALS.normal_max(month, hour=None), NORMALS.normal_uv(month, hour=None)  # the
   refresh every hour for nothing. Stale data is flagged instead.
 - **Evenings describe tomorrow.** Its photo and its forecast.
 - **A remarkable coming hour is re-checked between refreshes.** The top
-  fact's score sets a tier: 90+ every 5 minutes, 75+ every 15, 50+ every
-  30, otherwise hourly. At each re-check `/alert.json` carries a short digest
-  of the facts the panel would show, so the frame redraws only when that
-  changes; between re-checks the last digest is held, so a fact that
+  fact's score sets a tier: 90+ every 10 minutes (the frame's own cap on
+  alert redraws), 75+ every 15, 50+ every 30, otherwise hourly. A re-check
+  redraws only when the facts shown differ enough from the ones last drawn:
+  a fact appears or goes, the leading fact changes kind, or a score rises by
+  more than 5 or falls by more than 10. A few mm or km/h either way waits for
+  the hourly refresh. Between re-checks the answer is held, so a fact that
   vanishes mid-interval can't flash the panel. While a tier is active the
-  forecast is fetched as often as the tier re-checks. The frame allows at
-  most one such redraw per 10 minutes, so the 5-minute tier acts as 10.
+  forecast is fetched as often as the tier re-checks.
 - **"Since 9am" is modelled.** It sums Open-Meteo's hourly precipitation, not
   a rain gauge.
 - **Hazard data goes stale after 90 minutes.** An old "Advice" may have

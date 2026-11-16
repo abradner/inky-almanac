@@ -308,7 +308,7 @@ def coming(*fs):
     return facts.Coming(14, None, list(fs))
 
 
-@pytest.mark.parametrize("top, minutes", [(49, None), (50, 30), (74, 30), (75, 15), (89, 15), (90, 5), (100, 5)])
+@pytest.mark.parametrize("top, minutes", [(49, None), (50, 30), (74, 30), (75, 15), (89, 15), (90, 10), (100, 10)])
 def test_refresh_tiers_follow_the_top_score(top, minutes):
     assert facts.refresh_minutes(coming(facts.Fact("x", top, "", "", BLUE), facts.Fact("y", 10, "", "", BLUE))) == minutes
 
@@ -337,8 +337,61 @@ def test_digest_tracks_what_the_panel_shows():
 def test_digest_ignores_what_the_panel_does_not_show():
     a = shown("1", "2", "3", "4", "5")
     assert facts.digest(a) == facts.digest(shown("1", "2", "3", "4", "5", "a sixth, never drawn"))
+
+
+def S(*pairs):
+    return list(pairs)
+
+
+DRAWN = S(("hail", 100), ("rain", 54), ("wind", 30))
+
+
+def test_the_same_facts_are_not_worth_a_redraw():
+    assert not facts.worth_redrawing(DRAWN, list(DRAWN))
+    assert not facts.worth_redrawing([], [])
+
+
+@pytest.mark.parametrize("rain, redraw", [(59, False), (60, True), (44, False), (43, True)])
+def test_score_moves_beyond_the_thresholds(rain, redraw):
+    # Worse news: more than WORSE_BY (+6 redraws, +5 waits). Better news:
+    # more than BETTER_BY (-11 redraws, -10 waits).
+    assert facts.WORSE_BY == 5 and facts.BETTER_BY == 10
+    assert facts.worth_redrawing(DRAWN, S(("hail", 100), ("rain", rain), ("wind", 30))) is redraw
+
+
+def test_the_hero_fact_has_the_same_thresholds():
+    drawn = S(("rain", 80), ("wind", 30))
+    assert facts.worth_redrawing(drawn, S(("rain", 86), ("wind", 30)))
+    assert not facts.worth_redrawing(drawn, S(("rain", 85), ("wind", 30)))
+    assert facts.worth_redrawing(drawn, S(("rain", 69), ("wind", 30)))
+    assert not facts.worth_redrawing(drawn, S(("rain", 70), ("wind", 30)))
+
+
+def test_a_fact_appearing_or_going_is_worth_a_redraw():
+    assert facts.worth_redrawing(DRAWN, DRAWN + [("uv", 12)])
+    assert facts.worth_redrawing(DRAWN, DRAWN[:2])
+    assert facts.worth_redrawing(DRAWN, S(("hail", 100), ("rain", 54), ("uv", 30)))  # one in, one out
+    assert facts.worth_redrawing([], S(("rain", 54)))
+
+
+def test_a_new_hero_kind_is_worth_a_redraw():
+    assert facts.worth_redrawing(S(("rain", 80), ("wind", 79)), S(("wind", 81), ("rain", 80)))
+
+
+def test_the_table_reordering_alone_is_not():
+    assert not facts.worth_redrawing(S(("hail", 100), ("rain", 54), ("wind", 50)), S(("hail", 100), ("wind", 52), ("rain", 51)))
+
+
+def test_shown_state_is_the_displayed_kinds_and_scores_in_order():
+    c = shown("1", "2", "3", "4", "5", "6")
+    assert facts.shown_state(c) == [(f"k{i}", 60 - i) for i in range(5)]
+    assert facts.shown_state(None) == []
+
+
+def test_digest_includes_the_scores():
+    a = shown("1", "2", "3", "4", "5")
     rescored = coming(*[facts.Fact(f.key, f.score - 1, f.label, f.value, f.ink, f.sub) for f in a.facts])
-    assert facts.digest(a) == facts.digest(rescored)
+    assert facts.digest(a) != facts.digest(rescored)
 
 
 # ------------------------------------------------------------------ from a forecast
