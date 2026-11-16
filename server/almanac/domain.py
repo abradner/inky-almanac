@@ -101,6 +101,7 @@ class Day:
     label_override: str = None
     icon_override: str = None
     rain_text: str = None
+    rain_chance: int = None  # the outlook's chance of any rain, %; None without an outlook
     source: str = ""  # credit for the daily numbers, e.g. "BOM · Open-Meteo"
 
     @property
@@ -149,6 +150,7 @@ def apply_outlook(day_fc, b):
         day_fc.t_min = b.t_min
     if b.rain_prob is not None:
         day_fc.rain_prob = b.rain_prob
+        day_fc.rain_chance = b.rain_prob
     if b.precis:
         day_fc.label_override = b.precis
     if b.icon:

@@ -28,17 +28,17 @@ PRESETS = {
                    "dayCond": "storm", "rainP": 100, "rainMm": 88, "since9": 248, "lastHr": 96, "wind": 98, "gust": 148,
                    "windFrom": 7, "windTo": 4, "uv": 13,
                    "precis": "Very hot. Severe thunderstorms with giant hail, damaging winds and heavy rain likely in the afternoon and evening",
-                   "dayRain": 100, "mapMode": False, "longTitle": True, "hazard": "fire"},
+                   "dayRain": 100, "rainRange": "40 to 100 mm", "mapMode": False, "longTitle": True, "hazard": "fire"},
     "worstMap": {"date": "2026-09-30", "hour": 17, "tMin": 29, "tMax": 46, "tMinT": 31, "tMaxT": 47, "cond": "hail",
                  "dayCond": "storm", "rainP": 100, "rainMm": 88, "since9": 248, "lastHr": 96, "wind": 98, "gust": 148,
                  "windFrom": 7, "windTo": 4, "uv": 13,
                  "precis": "Very hot. Severe thunderstorms with giant hail, damaging winds and heavy rain likely in the afternoon and evening",
-                 "dayRain": 100, "mapMode": True, "longTitle": True, "hazard": "none"},
+                 "dayRain": 100, "rainRange": "40 to 100 mm", "mapMode": True, "longTitle": True, "hazard": "none"},
     "worstCold": {"date": "2026-06-24", "hour": 7, "tMin": -4, "tMax": 9, "tMinT": -3, "tMaxT": 8, "cond": "snow",
                   "dayCond": "snow", "rainP": 100, "rainMm": 12, "since9": 0, "lastHr": 3, "wind": 46, "gust": 92,
                   "windFrom": 4, "windTo": 6, "uv": 1,
                   "precis": "Snow showers above 800 metres. Bitterly cold with damaging westerly winds",
-                  "dayRain": 100, "mapMode": False, "longTitle": True, "hazard": "none"},
+                  "dayRain": 100, "rainRange": "10 to 25 mm", "mapMode": False, "longTitle": True, "hazard": "none"},
     # A normal day (the lab's "Hot afternoon"), a quiet morning, and an evening.
     "afternoon": {"hour": 14, "tMin": 18, "tMax": 34, "tMinT": 20, "tMaxT": 31, "cond": "clear", "rainP": 5, "rainMm": 0,
                   "wind": 14, "gust": 24, "uv": 10, "dayCond": "clear", "since9": 0, "lastHr": 0, "precis": "Sunny. Hot",
@@ -48,7 +48,8 @@ PRESETS = {
                 "dayRain": 10, "mapMode": False, "hazard": "none"},
     "night": {"hour": 21, "tMin": 16, "tMax": 30, "tMinT": 15, "tMaxT": 26, "cond": "cloudy", "rainP": 30, "rainMm": 0,
               "wind": 12, "gust": 20, "uv": 0, "dayCond": "showers", "since9": 0.4, "lastHr": 0,
-              "precis": "Cloudy. Shower or two", "dayRain": 40, "mapMode": False, "hazard": "none"},
+              "precis": "Cloudy. Shower or two", "dayRain": 40, "rainRange": "0 to 2 mm", "mapMode": False,
+              "hazard": "none"},
     # A hot afternoon with a southerly change seen at the coast, not yet
     # home, and a station's gauge for the rain so far (observed.Observed).
     "southerly": {"hour": 15, "tMin": 21, "tMax": 38, "tMinT": 18, "tMaxT": 25, "cond": "partly", "rainP": 20,
@@ -144,8 +145,10 @@ def payload(s):
 
 def forecast(s):
     fc = weather.parse(payload(s), now_of(s).timestamp() - 600)
-    for day in fc.days.values():  # BOM's précis, as apply_outlook would set it
+    for day in fc.days.values():  # BOM's précis and rain, as apply_outlook would set them
         day.label_override = s["precis"]
+        day.rain_chance = s["dayRain"]
+        day.rain_text = s.get("rainRange")
         day.source = "BOM · Open-Meteo"
     if s["dayCond"] == "sunstorm":
         for day in fc.days.values():

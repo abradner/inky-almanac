@@ -10,7 +10,8 @@ is capped below them, so hail and storms always lead.
 station observations, an observed.Observed), and `coming_hour(...)` does
 both. Observed figures take precedence over modelled ones: gauge rain
 since 9am and in the last hour replace the model's, and a southerly change
-seen at a station replaces a forecast one. The top fact's score also sets how often the panel re-checks
+seen at a station replaces a forecast one; a fresh station temperature
+is the hero's temperature (`Coming.temp`). The top fact's score also sets how often the panel re-checks
 the coming hour between hourly refreshes (`refresh_minutes`), and `digest`
 fingerprints what the panel would show, so only a real change redraws (see
 app.Almanac.alert).
@@ -21,6 +22,7 @@ from datetime import timedelta
 from typing import Optional
 
 from . import normals as normals_mod
+from . import observed as observed_mod
 from .domain import uv_label
 from .palette import BLACK, BLUE, ORANGE, RED
 
@@ -227,6 +229,16 @@ class Coming:
     label_hour: int  # the clock hour now; the panel says "3–4PM" for 15
     hour: object  # domain.Hour for the coming hour
     facts: list
+    temp: Optional[float] = None  # the hero's temperature: observed now, else None (use hour.temp)
+
+
+def observed_temp(observed, now):
+    """The station's air temperature, if its reading is fresh at `now`
+    (observed.STALE_AFTER), else None: observed beats any forecast, but
+    only while it still describes now."""
+    if observed is None or observed.temp is None or not observed_mod.fresh(observed, now):
+        return None
+    return observed.temp
 
 
 def _hour(forecast, when):
@@ -288,7 +300,8 @@ def coming_hour(forecast, now, poster_day, is_tomorrow, normals=None, observed=N
     i = inputs_for(forecast, now, poster_day, is_tomorrow, observed)
     if i is None:
         return None
-    return Coming(now.hour, _hour(forecast, now + timedelta(hours=1)), score(i, normals))
+    return Coming(now.hour, _hour(forecast, now + timedelta(hours=1)), score(i, normals),
+                  temp=observed_temp(observed, now))
 
 
 def refresh_minutes(coming):
