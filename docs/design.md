@@ -274,8 +274,8 @@ The rules live in `server/almanac/radar.py` and are pure.
 - **Known gaps**: the 64 km image can't see the far side of the 64 km circle
   around home (home isn't at the radar); fetching IDR713 (128 km) too would
   close it. A USB-powered frame redraws at about 00:0x when the mode ends at
-  midnight. USB-push mode has no `min_gap_s`. Button C was untested on the
-  real board when this was written.
+  midnight. USB-push mode has no `min_gap_s`. Button C was confirmed on the real
+  board on 18 Nov 2026: a press switched modes and drew the radar poster.
 
 ## 11. Render on the server; the frame draws an indexed PNG
 
@@ -505,8 +505,8 @@ to show; rewriting history was not attempted.
 - Whether 19 years of central-Sydney UV is representative enough.
 - Whether the observed southerly should also come from BOM's paid half-hourly
   history for better normals.
-- Button C has not been seen working on the real board: confirm a press
-  reaches `POST /mode`, and that a C press wakes the board on battery.
+- Button C works on USB power (confirmed 18 Nov 2026). Still unconfirmed:
+  that a C press wakes the board on battery.
 - Whether to fetch the 128 km radar (IDR713) as well, so "rain within 64 km"
   can see the far side of the circle around home.
 - A quieter OTA trial: after an install the frame forces a full redraw to
