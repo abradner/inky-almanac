@@ -1,0 +1,1239 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Inky Almanac playground</title>
+<meta name="description" content="Try the Inky Almanac poster in your browser: a JavaScript approximation of the 800×480 e-ink poster's layout and rules, with synthetic pictures for central Sydney.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Roboto+Condensed:wght@400;700&family=Roboto:wght@700&family=PT+Serif:ital@1&display=swap">
+<style>
+/* Page chrome follows the reader's light/dark preference (or the toggle);
+   the poster itself is always drawn in the panel's seven inks. */
+:root {
+  --bg: #f3f2ee; --surface: #ffffff; --fg: #1d1d22; --muted: #5e5c66; --line: #d9d7d0; --accent: #2c3680;
+  --ok: #2e6840; --bad: #b0342c;
+  --font-ui: "Roboto Condensed", "DejaVu Sans Condensed", "Arial Narrow", system-ui, sans-serif;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #17171b; --surface: #222228; --fg: #ecebe6; --muted: #a5a3ad; --line: #3a3a42; --accent: #9aa6ff;
+  --ok: #7fc795; --bad: #ff8a80; color-scheme: dark; } }
+:root[data-theme="dark"] { --bg: #17171b; --surface: #222228; --fg: #ecebe6; --muted: #a5a3ad; --line: #3a3a42;
+  --accent: #9aa6ff; --ok: #7fc795; --bad: #ff8a80; color-scheme: dark; }
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.45 var(--font-ui); }
+a { color: var(--accent); }
+.wrap { max-width: 1440px; margin: 0 auto; padding: 18px max(14px, env(safe-area-inset-right)) 40px max(14px, env(safe-area-inset-left)); }
+header.top { display: flex; gap: 12px; align-items: flex-start; justify-content: space-between; }
+h1 { font: 700 28px/1.1 var(--font-ui); margin: 0 0 6px; text-wrap: balance; }
+.lede { max-width: 78ch; margin: 0 0 6px; }
+.lede.small { color: var(--muted); font-size: 14px; }
+.layout { display: grid; grid-template-columns: 300px minmax(0, 1fr); grid-template-areas: "rail main"; gap: 18px; align-items: start; margin-top: 14px; }
+.main { grid-area: main; min-width: 0; }
+.rail { grid-area: rail; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 14px;
+  position: sticky; top: 10px; max-height: calc(100vh - 20px); overflow: auto; }
+@media (max-width: 920px) {
+  .layout { grid-template-columns: minmax(0, 1fr); grid-template-areas: "main" "rail"; }
+  .rail { position: static; max-height: none; }
+}
+.rail h2 { font: 700 12px var(--font-ui); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin: 16px 0 6px; }
+.rail h2:first-child { margin-top: 0; }
+.presets { display: flex; flex-wrap: wrap; gap: 6px; }
+button, .seg label { font: 600 13px var(--font-ui); border: 1px solid var(--line); background: var(--bg); color: var(--fg); border-radius: 6px; padding: 5px 9px; cursor: pointer; }
+button:hover, .seg label:hover { border-color: var(--accent); }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.row { display: grid; grid-template-columns: 92px minmax(0, 1fr) 54px; align-items: center; gap: 8px; margin: 5px 0; font-size: 13px; }
+.row output { text-align: right; font-variant-numeric: tabular-nums; color: var(--muted); }
+.row input[type=range] { width: 100%; accent-color: var(--accent); }
+.row select, .row input[type=text], .row input[type=date] { grid-column: 2 / 4; font: 13px var(--font-ui); padding: 3px 5px; border: 1px solid var(--line); border-radius: 5px; background: var(--bg); color: var(--fg); min-width: 0; }
+.check { display: flex; gap: 8px; align-items: center; font-size: 13px; margin: 6px 0; }
+.seg { display: flex; gap: 0; margin: 4px 0 8px; }
+.seg input { position: absolute; opacity: 0; pointer-events: none; }
+.seg label { border-radius: 0; flex: 1; text-align: center; }
+.seg label:first-of-type { border-radius: 6px 0 0 6px; }
+.seg label:last-of-type { border-radius: 0 6px 6px 0; }
+.seg input:checked + label { background: var(--accent); color: var(--bg); border-color: var(--accent); }
+.seg input:focus-visible + label { outline: 2px solid var(--accent); outline-offset: 2px; }
+.hint { color: var(--muted); font-size: 12px; margin: 2px 0 6px; }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 12px; margin-bottom: 16px; min-width: 0; }
+.card h2 { font: 700 16px var(--font-ui); margin: 0 0 6px; }
+.status { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; margin: 0 0 10px; font-size: 14px; }
+.pill { font: 700 12px var(--font-ui); padding: 2px 9px; border-radius: 99px; border: 1px solid currentColor; }
+.pill.ok { color: var(--ok); } .pill.bad { color: var(--bad); }
+.radar-box { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; margin-top: 8px; font-size: 13px; }
+.radar-box b.yes { color: var(--ok); } .radar-box b.no { color: var(--bad); }
+table.facts { border-collapse: collapse; width: 100%; font-size: 13px; }
+table.facts th, table.facts td { text-align: left; padding: 3px 6px; border-bottom: 1px solid var(--line); vertical-align: top; }
+table.facts td.n { text-align: right; font-variant-numeric: tabular-nums; }
+.notes ul { margin: 0; padding-left: 18px; }
+.notes li { margin: 3px 0; }
+.toggle { flex: none; }
+
+/* ---- the frame: an original drawing of a 7.3" e-ink board, not a photo ---- */
+.frame { position: relative; width: 100%; max-width: 1000px; margin: 0 auto; aspect-ratio: 960 / 690; container-type: inline-size; }
+.frame svg.board { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+/* The display window: exactly 800x480 poster pixels, scaled with the board. */
+.frame .glass { position: absolute; left: calc(80 / 960 * 100%); top: calc(118 / 690 * 100%); width: calc(800 / 960 * 100%); aspect-ratio: 800 / 480; overflow: hidden; background: #eeeee6; }
+.frame canvas { display: block; width: 100%; height: 100%; }
+#poster { display: none; }
+.frame .flash { position: absolute; inset: 0; pointer-events: none; opacity: 0; }
+.frame .flash.on { animation: einkflash 1.3s steps(1, end) forwards; }
+@keyframes einkflash {
+  0% { opacity: 1; background: #1a181e; } 15% { opacity: 1; background: #eeeee6; } 30% { opacity: 1; background: #1a181e; }
+  45% { opacity: 1; background: #b0342c; } 55% { opacity: 1; background: #e2ce42; } 65% { opacity: 1; background: #2c3680; }
+  78% { opacity: 1; background: #eeeee6; } 100% { opacity: 0; }
+}
+@media (prefers-reduced-motion: reduce) { .frame .flash.on { animation: none; } }
+.frame .btn { position: absolute; top: calc(634 / 690 * 100%); width: calc(46 / 960 * 100%); aspect-ratio: 1; transform: translate(-50%, -50%);
+  border-radius: 50%; border: 0; padding: 0; background: transparent; cursor: pointer; }
+.frame .btn:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+.frame .btn:active + .led, .frame .led.lit { fill: #ffd34d; }
+.frame-help { text-align: center; color: var(--muted); font-size: 13px; margin: 6px 0 0; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <div>
+      <h1>Inky Almanac playground</h1>
+      <p class="lede">The Inky Almanac is an 800×480 poster for a seven-colour e-ink panel: a landscape photo beside the coming hour's weather, ranked by how unusual it is, with hazard warnings when there are any. Move the controls to see how the layout and the rules respond: which fact leads, when the chart shrinks, when the panel would bother to redraw, and when the rain radar counts as rain. The buttons on the frame work too.</p>
+      <p class="lede small">This page is a JavaScript approximation for exploring. The Python renderer is the source of truth, and the frame's behaviour is explained in <a href="https://github.com/abradner/inky-almanac/blob/main/docs/behaviours.md">behaviours.md</a> (the reasons are in <a href="https://github.com/abradner/inky-almanac/blob/main/docs/design.md">design.md</a>). Everything here is made up for central Sydney: the photo, the warning map and the radar are drawn by this page. Nothing is fetched apart from web fonts.</p>
+    </div>
+    <button type="button" class="toggle" id="theme" aria-label="Colour theme">Theme: auto</button>
+  </header>
+
+  <div class="layout">
+    <div class="main">
+      <section class="card" aria-label="Poster">
+        <div class="status">
+          <span id="fit" class="pill ok">fits</span>
+          <span id="tier"></span>
+        </div>
+        <div class="frame" id="frame">
+          <svg class="board" viewBox="0 0 960 690" aria-hidden="true" focusable="false">
+            <defs>
+              <pattern id="zig" width="14" height="12" patternUnits="userSpaceOnUse">
+                <path d="M0 10 L3.5 2 L7 10 L10.5 2 L14 10" fill="none" stroke="#d7d4c6" stroke-width="1.4"/>
+              </pattern>
+              <linearGradient id="pcb" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0" stop-color="#fbfaf6"/><stop offset="1" stop-color="#ecebe4"/>
+              </linearGradient>
+            </defs>
+            <!-- the board -->
+            <rect x="4" y="4" width="952" height="682" rx="34" fill="url(#pcb)" stroke="#c9c6b8" stroke-width="2"/>
+            <!-- spiral-binding holes along the top, with the little traces between them -->
+            <g id="holes"></g>
+            <!-- the slot at the top centre -->
+            <rect x="440" y="62" width="80" height="14" rx="7" fill="#d9d6ca" stroke="#bdb9aa"/>
+            <!-- a dark label pill, top left (generic wording, not a brand) -->
+            <rect x="60" y="58" width="196" height="30" rx="15" fill="#22202a"/>
+            <text x="158" y="78" text-anchor="middle" font-family="Roboto Condensed, Arial Narrow, sans-serif" font-weight="700" font-size="15" letter-spacing="2" fill="#f2f0e8">INKY ALMANAC</text>
+            <text x="900" y="79" text-anchor="end" font-family="Roboto Condensed, Arial Narrow, sans-serif" font-size="14" fill="#9b988a">7.3″ e-ink · 800×480</text>
+            <!-- the display's thin border -->
+            <rect x="70" y="108" width="820" height="500" rx="4" fill="#b58bb8"/>
+            <rect x="76" y="114" width="808" height="488" fill="#1d1b22"/>
+            <!-- buttons A–E with an LED above each -->
+            <g id="buttons" font-family="Roboto Condensed, Arial Narrow, sans-serif" font-size="13" fill="#6d6a5e" text-anchor="middle"></g>
+          </svg>
+          <div class="glass"><canvas id="poster" width="800" height="480"></canvas><canvas id="view" role="img" aria-label="The poster"></canvas><div class="flash" id="flash"></div></div>
+        </div>
+        <p class="frame-help">Frame buttons: <b>A</b> redraw · <b>B</b> different photo · <b>C</b> radar on/off · D and E do nothing here (hover for what they do on the real frame).</p>
+      </section>
+
+      <section class="card" id="redraw-card" aria-labelledby="redraw-h">
+        <h2 id="redraw-h">Would this redraw?</h2>
+        <p class="hint" style="margin-top:0">Between the hourly redraws the frame re-checks a remarkable hour sooner, and redraws only if what it shows changed enough since it was last drawn (<a href="https://github.com/abradner/inky-almanac/blob/main/docs/behaviours.md#when-it-redraws">how</a>). Mark a state as drawn, change something, and see.</p>
+        <div class="status"><button type="button" id="mark">Mark this as drawn</button><span id="redraw"></span></div>
+        <div id="scores"></div>
+      </section>
+
+      <section class="card notes" aria-labelledby="simpl-h">
+        <h2 id="simpl-h">How close is this to the real poster?</h2>
+        <ul>
+          <li><b>Same rules, ported by hand:</b> the fact scoring and its constants, the header's lead rule, the forecast line, the hero, the facts table, the chart's labels, the bottom-up layout and the badges follow <code>server/almanac/render.py</code> and <code>facts.py</code> line by line. The Python is the source of truth: if they disagree, this page is wrong.</li>
+          <li><b>Fonts:</b> the renderer uses DejaVu Sans (Condensed). This page uses DejaVu if it's installed, otherwise Roboto stand-ins, so line breaks and widths can differ by a few pixels. The fit badge measures this page's text, not the renderer's.</li>
+          <li><b>Pixels:</b> the canvas is drawn with anti-aliasing and then snapped back to the seven inks, so edges are close to, not identical with, Pillow's.</li>
+          <li><b>The photo:</b> a synthetic landscape in smooth bands with a light ordered dither. Real photos are Wikimedia Commons pictures dithered with Atkinson diffusion, which looks grainier.</li>
+          <li><b>The warning map and the radar are synthetic.</b> No Bureau of Meteorology imagery is used: BOM's feeds are licensed for personal, non-commercial use. The radar's rain colours, stipple, home ring and the "rain within 64 km" test (level 2 and up, clusters of at least 160 pixels) are the renderer's; the coastline is invented.</li>
+          <li><b>The weather:</b> the controls build an hourly forecast the way the renderer's test fixtures do (<code>server/tests/panel_fixtures.py</code>), then anchor it to the BOM-style max and min. Normals are the committed central-Sydney placeholder for temperature and ARPANSA's measured Sydney UV, as the renderer uses before it has built ERA5 normals. Sunrise, sunset and the moon are calculated for central Sydney.</li>
+          <li><b>Left out:</b> the observed temperature in the hero, the stale-data badge, radar-mode exits and the alert id. The redraw panel shows the fact-score rules only.</li>
+        </ul>
+      </section>
+    </div>
+
+    <form class="rail" id="controls" onsubmit="return false" aria-label="Controls">
+      <h2>Scenarios</h2>
+      <div class="presets" id="presets"></div>
+
+      <h2>Picture</h2>
+      <div class="seg" role="radiogroup" aria-label="Picture">
+        <input type="radio" name="picture" id="pic-photo" value="photo" checked><label for="pic-photo">Photo</label>
+        <input type="radio" name="picture" id="pic-map" value="map"><label for="pic-map">Warning map</label>
+        <input type="radio" name="picture" id="pic-radar" value="radar"><label for="pic-radar">Rain radar</label>
+      </div>
+      <div id="photo-ctl">
+        <label class="check"><input type="checkbox" id="longTitle" checked> Long photo title</label>
+        <div class="row"><label for="hazard">Badges</label><select id="hazard">
+          <option value="none">None</option><option value="ban">Total fire ban</option>
+          <option value="fire">Fire watch and act + fire ban</option><option value="storm">Severe thunderstorm warning</option>
+          <option value="many">Emergency and more (+N MORE)</option><option value="nodata">No live hazard data</option></select></div>
+      </div>
+      <div id="map-ctl" hidden>
+        <label class="check"><input type="checkbox" id="longWarn" checked> Long warnings list</label>
+        <p class="hint">In map mode the warnings are listed in the panel instead of as badges.</p>
+      </div>
+      <div id="radar-ctl" hidden>
+        <div class="row"><label for="rIntensity">Heaviest</label><input type="range" id="rIntensity" min="1" max="15" value="9"><output id="rIntensity-o"></output></div>
+        <div class="row"><label for="rSize">Cell size</label><input type="range" id="rSize" min="0.5" max="20" step="0.1" value="6"><output id="rSize-o"></output></div>
+        <div class="row"><label for="rDist">From home</label><input type="range" id="rDist" min="0" max="90" value="20"><output id="rDist-o"></output></div>
+        <div class="row"><label for="rBearing">Direction</label><select id="rBearing">
+          <option value="0">North</option><option value="45">North-east</option><option value="135">South-east</option><option value="180">South</option>
+          <option value="225">South-west</option><option value="270" selected>West</option><option value="315">North-west</option></select></div>
+        <label class="check"><input type="checkbox" id="clutter" checked> Ground clutter and specks</label>
+        <div class="radar-box" id="radarInfo" aria-live="polite"></div>
+      </div>
+
+      <h2>Time</h2>
+      <div class="row"><label for="date">Date</label><input type="date" id="date" value="2026-11-14"></div>
+      <div class="row"><label for="hour">Hour</label><input type="range" id="hour" min="6" max="22" value="15"><output id="hour-o"></output></div>
+      <div class="row"><label for="leadAt">High leads</label><input type="range" id="leadAt" min="6" max="12" value="9"><output id="leadAt-o"></output></div>
+      <p class="hint">The poster redraws at a minute past each hour, 6 am to 10 pm. From 6 pm it describes tomorrow.</p>
+
+      <h2>Temperatures (BOM)</h2>
+      <div class="row"><label for="tMin">Today min</label><input type="range" id="tMin" min="-10" max="32" value="16"><output id="tMin-o"></output></div>
+      <div class="row"><label for="tMax">Today max</label><input type="range" id="tMax" min="0" max="48" value="30"><output id="tMax-o"></output></div>
+      <div class="row"><label for="tMinT">Tmrw min</label><input type="range" id="tMinT" min="-10" max="32" value="19"><output id="tMinT-o"></output></div>
+      <div class="row"><label for="tMaxT">Tmrw max</label><input type="range" id="tMaxT" min="0" max="48" value="33"><output id="tMaxT-o"></output></div>
+      <div class="row"><label for="bias">Model off by</label><input type="range" id="bias" min="-5" max="5" value="0"><output id="bias-o"></output></div>
+      <p class="hint" id="anchorNote">The hourly model is stretched so its peak and overnight trough match BOM's max and min.</p>
+
+      <h2>Coming hour</h2>
+      <div class="row"><label for="cond">Sky</label><select id="cond"></select></div>
+      <div class="row"><label for="rainP">Rain chance</label><input type="range" id="rainP" min="0" max="100" value="60"><output id="rainP-o"></output></div>
+      <div class="row"><label for="rainMm">Rain mm</label><input type="range" id="rainMm" min="0" max="120" step="0.2" value="0.6"><output id="rainMm-o"></output></div>
+      <div class="row"><label for="wind">Wind km/h</label><input type="range" id="wind" min="0" max="120" value="21"><output id="wind-o"></output></div>
+      <div class="row"><label for="gust">Gusts km/h</label><input type="range" id="gust" min="0" max="160" value="44"><output id="gust-o"></output></div>
+      <div class="row"><label for="windFrom">Wind now</label><select id="windFrom"></select></div>
+      <div class="row"><label for="windTo">Next hour</label><select id="windTo"></select></div>
+      <div class="row"><label for="uv">UV</label><input type="range" id="uv" min="0" max="14" value="7"><output id="uv-o"></output></div>
+
+      <h2>Observed</h2>
+      <div class="row"><label for="gauge">Rain so far</label><select id="gauge">
+        <option value="model">Model (no fresh gauge)</option><option value="station">Station gauge</option></select></div>
+      <div class="row"><label for="since9">Since 9am</label><input type="range" id="since9" min="0" max="300" step="0.2" value="4.2"><output id="since9-o"></output></div>
+      <div class="row"><label for="lastHr">Last hour</label><input type="range" id="lastHr" min="0" max="120" step="0.2" value="1"><output id="lastHr-o"></output></div>
+      <div class="row"><label for="southerly">Southerly</label><select id="southerly">
+        <option value="none">None seen</option><option value="coast">Seen at Kurnell</option><option value="here">Arrived at home</option></select></div>
+
+      <h2>Day</h2>
+      <div class="row"><label for="dayCond">Day sky</label><select id="dayCond"></select></div>
+      <div class="row"><label for="precis">Forecast</label><input type="text" id="precis" value="Shower or two. Possible storm"></div>
+      <div class="row"><label for="dayRain">Day rain</label><input type="range" id="dayRain" min="0" max="100" value="60"><output id="dayRain-o"></output></div>
+      <div class="row"><label for="rainRange">Rain range</label><input type="text" id="rainRange" value="1 to 5 mm"></div>
+      <div class="row"><label for="moon">Moon</label><select id="moon">
+        <option value="auto">From the date</option><option value="0">New</option><option value="0.125">Waxing crescent</option><option value="0.25">First quarter</option><option value="0.375">Waxing gibbous</option>
+        <option value="0.5">Full</option><option value="0.625">Waning gibbous</option><option value="0.75">Last quarter</option><option value="0.875">Waning crescent</option></select></div>
+      <div class="row"><label for="stale">Forecast age</label><select id="stale">
+        <option value="0">Fresh</option><option value="3">Over 3 h old</option><option value="12">Over 12 h old</option><option value="24">Over a day old</option></select></div>
+
+      <h2>Show</h2>
+      <label class="check"><input type="checkbox" id="showScores"> Show fact scores</label>
+    </form>
+  </div>
+</div>
+
+<script>
+"use strict";
+/* =====================================================================
+   Inks, fonts and a tiny Pillow-like drawing layer
+   ===================================================================== */
+const W = 800, H = 480;
+const BLACK = 0, WHITE = 1, GREEN = 2, BLUE = 3, RED = 4, YELLOW = 5, ORANGE = 6;
+// palette.INK_RGB: roughly what each ink looks like on the glass
+const INK_RGB = [[26, 24, 30], [238, 238, 230], [46, 104, 64], [44, 54, 128], [176, 52, 44], [226, 206, 66], [208, 112, 52]];
+const CSS = INK_RGB.map((c) => `rgb(${c.join(",")})`);
+let PHOTO_W = 500, SIDE_X = 516, SIDE_W = 270;
+function setLayout(pw) { PHOTO_W = pw; SIDE_X = pw + 16; SIDE_W = W - SIDE_X - 14; }
+
+const FAM = {
+  sans: '"DejaVu Sans", Roboto, "Helvetica Neue", Arial, sans-serif',
+  cond: '"DejaVu Sans Condensed", "Roboto Condensed", "Arial Narrow", sans-serif',
+  serif: '"DejaVu Serif Condensed", "DejaVu Serif", "PT Serif", Georgia, serif',
+};
+const mkFont = (css, size) => ({ css, size });
+const SANS = (s) => mkFont(`${s}px ${FAM.sans}`, s);
+const BOLD = (s) => mkFont(`bold ${s}px ${FAM.sans}`, s);
+const C = (s) => mkFont(`${s}px ${FAM.cond}`, s);
+const CB = (s) => mkFont(`bold ${s}px ${FAM.cond}`, s);
+const CI = (s) => mkFont(`italic ${s}px ${FAM.serif}`, s);
+
+/* Python's round(): half to even. */
+function pyRound(x) { const f = Math.floor(x), d = x - f; if (Math.abs(d - 0.5) < 1e-9) return f % 2 === 0 ? f : f + 1; return Math.round(x); }
+/* facts.half_up: half away from zero. */
+const halfUp = (x) => (x >= 0 ? Math.floor(x + 0.5) : -Math.floor(-x + 0.5));
+const deg = (t) => `${pyRound(t)}°`;
+const sum = (a) => a.reduce((p, q) => p + q, 0);
+
+/* An ImageDraw stand-in that also records each section's bounding box,
+   like render.Recorder, so the page can run the renderer's fit checks. */
+class Rec {
+  constructor(ctx) { this.ctx = ctx; this.section = null; this.boxes = {}; this.texts = []; this._m = new Map(); }
+  note(x0, y0, x1, y1) {
+    if (!this.section) return;
+    const b = this.boxes[this.section];
+    this.boxes[this.section] = b ? [Math.min(b[0], x0), Math.min(b[1], y0), Math.max(b[2], x1), Math.max(b[3], y1)] : [x0, y0, x1, y1];
+  }
+  len(t, f) { this.ctx.font = f.css; return this.ctx.measureText(t).width; }
+  vm(f) { // the font's ascender and descender
+    if (!this._m.has(f.css)) {
+      this.ctx.font = f.css;
+      const m = this.ctx.measureText("Hgjy°");
+      const asc = m.fontBoundingBoxAscent ?? m.actualBoundingBoxAscent * 1.15;
+      const desc = m.fontBoundingBoxDescent ?? m.actualBoundingBoxDescent * 1.2;
+      this._m.set(f.css, [asc, desc]);
+    }
+    return this._m.get(f.css);
+  }
+  inkTop(f, t) { this.ctx.font = f.css; return this.vm(f)[0] - this.ctx.measureText(t).actualBoundingBoxAscent; }
+  _at(x, y, f, anchor) {
+    const [asc, desc] = this.vm(f), h = anchor[0], v = anchor[1];
+    this.ctx.font = f.css;
+    this.ctx.textAlign = h === "l" ? "left" : h === "m" ? "center" : "right";
+    this.ctx.textBaseline = "alphabetic";
+    return v === "s" ? y : v === "m" ? y + (asc - desc) / 2 : y + asc;
+  }
+  bbox(x, y, t, f, anchor = "la", sw = 0) {
+    const by = this._at(x, y, f, anchor), m = this.ctx.measureText(t);
+    return [x - m.actualBoundingBoxLeft - sw, by - m.actualBoundingBoxAscent - sw, x + m.actualBoundingBoxRight + sw, by + m.actualBoundingBoxDescent + sw];
+  }
+  text(x, y, t, f, ink, anchor = "la", sw = 0, swInk = WHITE) {
+    const by = this._at(x, y, f, anchor), c = this.ctx;
+    if (sw) { c.lineJoin = "round"; c.lineWidth = sw * 2; c.strokeStyle = CSS[swInk]; c.strokeText(t, x, by); }
+    c.fillStyle = CSS[ink]; c.fillText(t, x, by);
+    this.texts.push([this.section, t, ink]);
+    if (t.trim()) this.note(...this.bbox(x, y, t, f, anchor, sw));
+  }
+  line(pts, ink, w = 1) {
+    const c = this.ctx, xs = pts.map((p) => p[0]), ys = pts.map((p) => p[1]);
+    const horiz = pts.length === 2 && ys[0] === ys[1], vert = pts.length === 2 && xs[0] === xs[1];
+    c.fillStyle = c.strokeStyle = CSS[ink];
+    if (horiz) c.fillRect(Math.round(Math.min(...xs)), Math.round(ys[0]) - Math.floor(w / 2), Math.round(Math.abs(xs[1] - xs[0])) + 1, w);
+    else if (vert) c.fillRect(Math.round(xs[0]) - Math.floor(w / 2), Math.round(Math.min(...ys)), w, Math.round(Math.abs(ys[1] - ys[0])) + 1);
+    else { c.lineWidth = w; c.lineJoin = "round"; c.lineCap = "round"; c.beginPath(); pts.forEach((p, i) => (i ? c.lineTo(p[0], p[1]) : c.moveTo(p[0], p[1]))); c.stroke(); }
+    const half = w / 2, gx = horiz ? 0 : half, gy = vert ? 0 : half;
+    this.note(Math.min(...xs) - gx, Math.min(...ys) - gy, Math.max(...xs) + 1 + gx, Math.max(...ys) + 1 + gy);
+  }
+  rect(x0, y0, x1, y1, fill) {
+    x0 = Math.round(x0); y0 = Math.round(y0); x1 = Math.round(x1); y1 = Math.round(y1);
+    this.ctx.fillStyle = CSS[fill]; this.ctx.fillRect(x0, y0, x1 - x0 + 1, y1 - y0 + 1);
+    this.note(x0, y0, x1 + 1, y1 + 1);
+  }
+  rrect(x0, y0, x1, y1, r, fill, outline = null, w = 0) {
+    const c = this.ctx;
+    c.beginPath(); c.roundRect(x0, y0, x1 - x0 + 1, y1 - y0 + 1, r); c.fillStyle = CSS[fill]; c.fill();
+    if (outline !== null) { c.beginPath(); c.roundRect(x0 + w / 2, y0 + w / 2, x1 - x0 + 1 - w, y1 - y0 + 1 - w, Math.max(0, r - w / 2)); c.lineWidth = w; c.strokeStyle = CSS[outline]; c.stroke(); }
+    this.note(x0, y0, x1 + 1, y1 + 1);
+  }
+  ellipse(x0, y0, x1, y1, fill = null, outline = null, w = 1) {
+    const c = this.ctx, cx = (x0 + x1) / 2, cy = (y0 + y1) / 2, rx = (x1 - x0) / 2, ry = (y1 - y0) / 2;
+    if (rx <= 0 || ry <= 0) return;
+    if (fill !== null) { c.beginPath(); c.ellipse(cx, cy, rx + 0.5, ry + 0.5, 0, 0, 7); c.fillStyle = CSS[fill]; c.fill(); }
+    if (outline !== null) { c.beginPath(); c.ellipse(cx, cy, Math.max(0.5, rx + 0.5 - w / 2), Math.max(0.5, ry + 0.5 - w / 2), 0, 0, 7); c.lineWidth = w; c.strokeStyle = CSS[outline]; c.stroke(); }
+    this.note(x0, y0, x1 + 1, y1 + 1);
+  }
+  polygon(pts, fill, outline = null, w = 1) {
+    const c = this.ctx; c.beginPath(); pts.forEach((p, i) => (i ? c.lineTo(p[0], p[1]) : c.moveTo(p[0], p[1]))); c.closePath();
+    c.fillStyle = CSS[fill]; c.fill();
+    if (outline !== null) { c.lineWidth = w; c.lineJoin = "round"; c.strokeStyle = CSS[outline]; c.stroke(); }
+    const xs = pts.map((p) => p[0]), ys = pts.map((p) => p[1]);
+    this.note(Math.min(...xs), Math.min(...ys), Math.max(...xs) + 1, Math.max(...ys) + 1);
+  }
+}
+
+function fitText(d, text, f, width) {
+  if (d.len(text, f) <= width) return text;
+  while (text && d.len(text + "…", f) > width) text = text.slice(0, -1);
+  return text.replace(/[ ,;:\-]+$/, "") + "…";
+}
+/* render.wrap: up to `lines` lines, the first `firstIndent` narrower; the last cut with an ellipsis. */
+function wrap(d, text, f, width, lines, firstIndent = 0) {
+  const words = text.split(/[ \t\r\n]+/).filter(Boolean); let out = [], cur = "";
+  for (const w of words) {
+    const trial = (cur + " " + w).trim();
+    if (d.len(trial, f) <= width - (out.length ? 0 : firstIndent)) cur = trial;
+    else { if (cur) out.push(cur); cur = w; }
+  }
+  if (cur) out.push(cur);
+  if (out.length > lines) out = out.slice(0, lines - 1).concat([out.slice(lines - 1).join(" ")]);
+  return out.map((line, i) => fitText(d, line, f, width - (i === 0 ? firstIndent : 0)));
+}
+
+/* =====================================================================
+   Icons (icons.py)
+   ===================================================================== */
+function sunIcon(d, cx, cy, r, rays = true, ray = [5, 13], rayW = 4, outline = 3) {
+  if (rays) for (let k = 0; k < 8; k++) {
+    const a = k * Math.PI / 4;
+    d.line([[cx + Math.cos(a) * (r + ray[0]), cy + Math.sin(a) * (r + ray[0])], [cx + Math.cos(a) * (r + ray[1]), cy + Math.sin(a) * (r + ray[1])]], ORANGE, rayW);
+  }
+  d.ellipse(cx - r, cy - r, cx + r, cy + r, YELLOW, ORANGE, outline);
+}
+function cloud(d, x, y, w, fill = WHITE, outline = BLACK, stroke = 3) {
+  const h = w * 0.6;
+  const parts = [["e", x + w * 0.05, y + h * 0.40, x + w * 0.45, y + h * 0.95], ["e", x + w * 0.22, y + h * 0.10, x + w * 0.62, y + h * 0.70],
+    ["e", x + w * 0.48, y + h * 0.25, x + w * 0.95, y + h * 0.95], ["r", x + w * 0.25, y + h * 0.60, x + w * 0.75, y + h * 0.95]];
+  for (const [grow, colour] of [[stroke, outline], [0, fill]]) for (const [k, x0, y0, x1, y1] of parts) {
+    if (k === "e") d.ellipse(x0 - grow, y0 - grow, x1 + grow, y1 + grow, colour);
+    else d.rect(x0 - grow, y0 - grow, x1 + grow, y1 + grow, colour);
+  }
+}
+function drops(d, x, y, w, n, length) { for (let k = 0; k < n; k++) { const dx = x + w * (0.2 + 0.6 * k / Math.max(1, n - 1)); d.line([[dx, y], [dx - length * 0.35, y + length]], BLUE, 4); } }
+function weatherIcon(d, kind, x, y, s) {
+  if (kind === "clear") sunIcon(d, x + s / 2, y + s / 2, s * 0.24);
+  else if (kind === "partly") { sunIcon(d, x + s * 0.62, y + s * 0.34, s * 0.18); cloud(d, x + s * 0.04, y + s * 0.38, s * 0.72); }
+  else if (kind === "cloudy") { cloud(d, x + s * 0.30, y + s * 0.14, s * 0.62); cloud(d, x + s * 0.02, y + s * 0.36, s * 0.78); }
+  else if (kind === "fog") { cloud(d, x + s * 0.12, y + s * 0.08, s * 0.76); for (let k = 0; k < 3; k++) { const yy = y + s * (0.66 + 0.11 * k); d.line([[x + s * (0.10 + 0.05 * k), yy], [x + s * (0.90 - 0.05 * k), yy + 0.001]], BLACK, 3); } }
+  else if (["drizzle", "rain", "showers"].includes(kind)) {
+    if (kind === "showers") sunIcon(d, x + s * 0.68, y + s * 0.24, s * 0.15, false);
+    cloud(d, x + s * 0.08, y + s * 0.10, s * 0.80);
+    const [n, len] = { drizzle: [3, s * 0.12], rain: [4, s * 0.22], showers: [3, s * 0.20] }[kind];
+    drops(d, x + s * 0.12, y + s * 0.68, s * 0.70, n, len);
+  } else if (kind === "storm" || kind === "hail") {
+    cloud(d, x + s * 0.08, y + s * 0.06, s * 0.80);
+    const bolt = [[0.52, 0.52], [0.36, 0.78], [0.48, 0.78], [0.40, 0.98], [0.66, 0.68], [0.53, 0.68], [0.62, 0.52]];
+    d.polygon(bolt.map(([a, b]) => [x + s * a, y + s * b]), YELLOW, BLACK, 2);
+    if (kind === "hail") for (const cx of [0.24, 0.76]) { const r = s * 0.06; d.ellipse(x + s * cx - r, y + s * 0.88 - r, x + s * cx + r, y + s * 0.88 + r, WHITE, BLUE, 3); }
+  } else if (kind === "snow") {
+    cloud(d, x + s * 0.08, y + s * 0.08, s * 0.80);
+    for (let k = 0; k < 3; k++) { const cx = x + s * (0.28 + 0.22 * k), cy = y + s * 0.82, r = s * 0.06;
+      for (let a = 0; a < 3; a++) { const g = a * Math.PI / 3; d.line([[cx - Math.cos(g) * r, cy - Math.sin(g) * r], [cx + Math.cos(g) * r + 0.001, cy + Math.sin(g) * r]], BLUE, 2); } }
+  } else cloud(d, x + s * 0.08, y + s * 0.2, s * 0.8);
+}
+/* astro.lit_span + icons.moon: lit part yellow, as seen from the southern hemisphere. */
+function litSpan(phase, half, southern) {
+  const c = Math.cos(2 * Math.PI * phase) * half; let lo, hi;
+  if (phase < 0.5) { lo = c; hi = half; } else { lo = -half; hi = -c; }
+  if (southern) [lo, hi] = [-hi, -lo];
+  return hi - lo <= 0 ? null : [lo, hi];
+}
+function moonIcon(d, cx, cy, r, phase, southern) {
+  d.ellipse(cx - r, cy - r, cx + r, cy + r, BLACK);
+  for (let row = -r; row <= r; row++) {
+    const span = litSpan(phase, Math.sqrt(Math.max(0, r * r - row * row)), southern);
+    if (span && span[1] - span[0] >= 1) { d.ctx.fillStyle = CSS[YELLOW]; d.ctx.fillRect(Math.round(cx + span[0]), cy + row, Math.round(span[1] - span[0]) + 1, 1); }
+  }
+  d.ellipse(cx - r, cy - r, cx + r, cy + r, null, BLACK, 2);
+}
+const MOON_NAMES = [[0.0339, "New moon"], [0.2161, "Waxing crescent"], [0.2839, "First quarter"], [0.4661, "Waxing gibbous"], [0.5339, "Full moon"],
+  [0.7161, "Waning gibbous"], [0.7839, "Last quarter"], [0.9661, "Waning crescent"], [1.0001, "New moon"]];
+const phaseName = (p) => (MOON_NAMES.find(([l]) => p < l) || [0, "New moon"])[1];
+
+/* =====================================================================
+   The place: central Sydney only (the repo's default location)
+   ===================================================================== */
+const HOME = { lat: -33.86, lon: 151.21, name: "Sydney" };
+function sydneyOffset(y, m, dd, hour = 12) { // hours ahead of UTC, from the browser's zone database
+  const t = Date.UTC(y, m - 1, dd, hour - 10);
+  const s = new Intl.DateTimeFormat("en-AU", { timeZone: "Australia/Sydney", timeZoneName: "shortOffset" }).formatToParts(new Date(t)).find((p) => p.type === "timeZoneName").value;
+  const mt = /GMT([+-]\d+)(?::(\d+))?/.exec(s); return mt ? +mt[1] + (mt[2] ? +mt[2] / 60 : 0) : 10;
+}
+/* Sunrise and sunset (NOAA's sunrise equation, zenith 90.833°), local clock hours. */
+function sunTimes(y, m, dd) {
+  const rad = Math.PI / 180, N = Math.round((Date.UTC(y, m - 1, dd) - Date.UTC(y, 0, 0)) / 864e5), lngHour = HOME.lon / 15, off = sydneyOffset(y, m, dd);
+  const calc = (rising) => {
+    const t = N + ((rising ? 6 : 18) - lngHour) / 24, M = 0.9856 * t - 3.289;
+    let L = (M + 1.916 * Math.sin(M * rad) + 0.020 * Math.sin(2 * M * rad) + 282.634 + 360) % 360;
+    let RA = (Math.atan(0.91764 * Math.tan(L * rad)) / rad + 360) % 360;
+    RA = (RA + Math.floor(L / 90) * 90 - Math.floor(RA / 90) * 90) / 15;
+    const sinDec = 0.39782 * Math.sin(L * rad), cosDec = Math.cos(Math.asin(sinDec));
+    const cosH = (Math.cos(90.833 * rad) - sinDec * Math.sin(HOME.lat * rad)) / (cosDec * Math.cos(HOME.lat * rad));
+    const Hh = (rising ? 360 - Math.acos(cosH) / rad : Math.acos(cosH) / rad) / 15;
+    const T = Hh + RA - 0.06571 * t - 6.622;
+    return (((T - lngHour) % 24 + 24) % 24 + off) % 24;
+  };
+  return [calc(true), calc(false)];
+}
+const clock = (h) => { let mins = Math.round(h * 60), hh = Math.floor(mins / 60) % 24, mm = mins % 60; return `${hh % 12 || 12}:${String(mm).padStart(2, "0")}${hh < 12 ? "am" : "pm"}`; };
+const SYNODIC = 29.530588853, NEW_MOON = Date.UTC(2000, 0, 6, 18, 14);
+function moonPhaseOn(y, m, dd) { const t = Date.UTC(y, m - 1, dd, 21) - sydneyOffset(y, m, dd, 21) * 36e5; return (((t - NEW_MOON) / 864e5 / SYNODIC) % 1 + 1) % 1; }
+
+/* Normals, as the renderer uses them before ERA5 is built: the committed
+   central-Sydney placeholder (providers/climate.py _PH_MAX) and ARPANSA's
+   measured Sydney UV, mean by month and clock hour (data/uv_normals.json). */
+const PH_MAX = [26.0, 26.0, 24.8, 22.6, 20.0, 17.6, 17.0, 18.4, 20.6, 22.5, 23.8, 25.4];
+const UV_MEAN = [[0,0,0,0,0,0,0.1,0.5,1.5,3.2,5.4,7.4,8.7,9.0,7.8,5.8,3.6,1.7,0.5,0.1,0,0,0,0],[0,0,0,0,0,0,0,0.2,1.0,2.5,4.5,6.5,7.8,8.1,7.1,5.3,3.1,1.4,0.4,0.1,0,0,0,0],
+  [0,0,0,0,0,0,0,0.1,0.6,1.8,3.4,5.0,6.1,6.2,5.3,3.7,2.0,0.7,0.1,0,0,0,0,0],[0,0,0,0,0,0,0,0.3,1.0,2.2,3.4,4.2,4.2,3.5,2.3,1.1,0.4,0.1,0,0,0,0,0,0],
+  [0,0,0,0,0,0,0,0.1,0.6,1.4,2.3,2.8,2.7,2.1,1.2,0.5,0.1,0,0,0,0,0,0,0],[0,0,0,0,0,0,0,0.1,0.3,0.9,1.5,1.9,1.9,1.4,0.8,0.3,0.1,0,0,0,0,0,0,0],
+  [0,0,0,0,0,0,0,0.1,0.4,1.0,1.7,2.2,2.2,1.8,1.0,0.4,0.1,0,0,0,0,0,0,0],[0,0,0,0,0,0,0,0.2,0.7,1.6,2.5,3.1,3.1,2.5,1.6,0.7,0.2,0,0,0,0,0,0,0],
+  [0,0,0,0,0,0,0.1,0.5,1.5,2.9,4.1,4.7,4.6,3.8,2.5,1.2,0.4,0.1,0,0,0,0,0,0],[0,0,0,0,0,0,0.1,0.4,1.3,2.8,4.3,5.6,6.2,5.8,4.6,3.0,1.5,0.5,0.1,0,0,0,0,0],
+  [0,0,0,0,0,0,0.1,0.6,1.7,3.3,5.1,6.7,7.4,7.2,5.9,4.0,2.2,0.9,0.2,0,0,0,0,0],[0,0,0,0,0,0,0.1,0.7,1.8,3.6,5.7,7.4,8.5,8.3,7.0,5.1,3.0,1.4,0.4,0.1,0,0,0,0]];
+const normalMax = (month) => PH_MAX[month - 1];
+const normalUv = (month, hour) => UV_MEAN[month - 1][hour % 24];
+
+/* =====================================================================
+   The weather the controls describe, built as the test fixtures build it
+   (server/tests/panel_fixtures.py), then anchored (anchor.py)
+   ===================================================================== */
+const CODES = { clear: 0, partly: 2, cloudy: 3, fog: 45, haze: 1, drizzle: 53, showers: 80, rain: 63, snow: 73, sunstorm: 1, storm: 95, hail: 96 };
+const SKY_LABELS = { clear: "Clear", partly: "Partly cloudy", cloudy: "Cloudy", fog: "Fog", haze: "Haze (mostly sunny)", drizzle: "Drizzle", showers: "Showers",
+  rain: "Rain", snow: "Snow or sleet", sunstorm: "Sunny, storms later", storm: "Storms", hail: "Hail" };
+const DESCRIBE = { 0: ["Clear", "clear"], 1: ["Mostly sunny", "clear"], 2: ["Partly cloudy", "partly"], 3: ["Cloudy", "cloudy"], 45: ["Fog", "fog"], 48: ["Fog", "fog"],
+  53: ["Drizzle", "drizzle"], 63: ["Rain", "rain"], 73: ["Snow", "snow"], 80: ["Showers", "showers"], 95: ["Thunderstorms", "storm"], 96: ["Storms, hail", "storm"], 99: ["Storms, hail", "storm"] };
+const describe = (code) => DESCRIBE[code] || ["Unknown", "cloudy"];
+const HAIL = [96, 99], STORMS = [95], FOG = [45, 48], SNOW = [71, 73, 75, 77, 85, 86];
+const DIRS = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"];
+
+function tempAt(s, h) { // the mockup's curve: minimum at 5 am, maximum at 3 pm (24+ is tomorrow)
+  const day = h < 24 ? [s.tMin, s.tMax] : [s.tMinT, s.tMaxT], hh = h % 24;
+  if (hh >= 5 && hh <= 15) return day[0] + (day[1] - day[0]) * (1 - Math.cos(Math.PI * (hh - 5) / 10)) / 2;
+  const nextMin = h < 24 ? (hh > 15 ? s.tMinT : s.tMin) : s.tMinT;
+  const from = hh > 15 ? day[1] : (h < 24 ? s.tMax : s.tMaxT);
+  const t = hh > 15 ? (hh - 15) / 14 : (hh + 9) / 14;
+  return from + (nextMin - from) * (1 - Math.cos(Math.PI * t)) / 2;
+}
+const diurnal = (h) => { const x = ((h - 5) % 24 + 24) % 24; return x <= 10 ? 0.5 - 0.5 * Math.cos(Math.PI * x / 10) : 0.5 + 0.5 * Math.cos(Math.PI * (x - 10) / 14); };
+
+/* anchor.temp_map: stretch the model's day so its 6am–9pm peak and
+   midnight–9am trough land on the outlook's max and min. */
+function tempMap(mLo, mHi, tMin, tMax) {
+  if (mHi > mLo && tMax > tMin) {
+    const sc = (tMax - tMin) / (mHi - mLo);
+    return (t) => t === mHi ? tMax : t === mLo ? tMin : t > mHi ? tMax + (t - mHi) : t < mLo ? tMin + (t - mLo) : tMin + (t - mLo) * sc;
+  }
+  const sh = tMax - mHi; return (t) => t === mHi ? tMax : t + sh;
+}
+
+function buildForecast(s) {
+  const hour = s.hour, nxt = hour + 1;
+  const sinceHours = []; for (let h = 10; h <= hour; h++) sinceHours.push(h);
+  const hrs = [];
+  for (let k = 0; k < 48; k++) {
+    const h = k % 24;
+    let temp = Math.round(tempAt(s, Math.min(k, 47)) * 10) / 10 + s.bias * diurnal(h); // the model, off by `bias` at its peak
+    let p = pyRound(Math.max(0, Math.min(100, s.dayRain + 30 * Math.sin((h - 10) / 3))));
+    let code = CODES[s.dayCond], rain = 0, w = s.wind * 0.6, g = s.gust * 0.6, dir = s.windFrom * 45;
+    if (k < 24 && s.since9 && sinceHours.includes(h)) { const rest = s.since9 - s.lastHr; rain = h === hour ? s.lastHr : rest / Math.max(1, sinceHours.length - 1); }
+    if (k === hour) { w = s.wind * 0.8; g = s.gust * 0.8; }
+    if (k === nxt) { p = s.rainP; code = CODES[s.cond]; rain = s.rainMm; w = s.wind; g = s.gust; dir = s.windTo * 45; }
+    if (s.cond === "sunstorm" && k > nxt && k < 24 && h >= 14 && h <= 19) code = 95;
+    const uv = k === nxt ? s.uv : (h >= 6 && h <= 19 ? Math.max(0, s.uv * Math.sin(Math.PI * (h - 6) / 13)) : 0);
+    hrs.push({ k, hour: h, temp, rain_prob: p, code, rain_mm: rain, wind: w, gust: g, wind_dir: dir, uv });
+  }
+  // Anchor each day to its outlook (today's and tomorrow's BOM max/min).
+  const notes = [];
+  for (const [base, tMin, tMax] of [[0, s.tMin, s.tMax], [24, s.tMinT, s.tMaxT]]) {
+    const day = hrs.slice(base, base + 24);
+    const mHi = Math.max(...day.filter((x) => x.hour >= 6 && x.hour <= 21).map((x) => x.temp));
+    const mLo = Math.min(...day.filter((x) => x.hour <= 9).map((x) => x.temp));
+    const f = tempMap(mLo, mHi, tMin, tMax);
+    notes.push([mHi, tMax]);
+    for (const x of day) x.temp = f(x.temp);
+  }
+  return { hours: hrs, notes };
+}
+
+/* =====================================================================
+   Facts (facts.py): one function per fact, the same constants
+   ===================================================================== */
+const REFRESH_TIERS = [[90, 10], [75, 15], [50, 30]];
+const WORSE_BY = 5, BETTER_BY = 10, NON_HAZARD_CAP = 89, SOUTHERLY_ARRIVING = 80, SOUTHERLY_HERE = 50, SHOWN_FACTS = 5;
+const fmtMm = (mm) => (mm >= 1 ? `${halfUp(mm)}` : mm.toFixed(1));
+const compass = (d) => DIRS[Math.floor(((d % 360) + 360) % 360 / 45 + 0.5) % 8];
+const turn = (a, b) => { const d = Math.abs(a - b) % 360; return Math.min(d, 360 - d); };
+const uvLabel = (u) => (u < 3 ? "low" : u < 6 ? "moderate" : u < 8 ? "high" : u < 11 ? "very high" : "extreme");
+const fact = (key, score, label, value, ink, sub = "", hazard = false) => ({ key, score, label, value, ink, sub, hazard });
+const capped = (key, s, label, value, ink, sub = "") => fact(key, halfUp(Math.min(NON_HAZARD_CAP, s)), label, value, ink, sub);
+
+function scoreFacts(i) {
+  const out = [];
+  if (HAIL.includes(i.code)) out.push(fact("hail", 100, "next hour", "Hail", RED, "", true));
+  else if (STORMS.includes(i.code)) out.push(fact("storms", 90, "next hour", "Storms", RED, "", true));
+  else if (i.storms_later) out.push(fact("storms-later", 60, "today", "Storms later", RED, "", true));
+  if (FOG.includes(i.code)) out.push(fact("fog", 50, "low visibility", "Fog", BLACK, "", true));
+  // rain
+  let s = null;
+  if (i.rain_mm >= 0.2) s = 40 + Math.min(40, i.rain_mm * 8); else if (i.rain_prob >= 25) s = i.rain_prob * 0.6;
+  if (s !== null) out.push(capped("rain", s, `${SNOW.includes(i.code) ? "Snow" : "Rain"} next hr`, `${i.rain_prob}% · ${fmtMm(i.rain_mm)} mm`, BLUE));
+  // since 9am
+  if (i.since9_mm >= 1) out.push(capped("since9", 20 + Math.min(30, i.since9_mm * 2), "Since 9am", `${fmtMm(i.since9_mm)} mm`, BLUE, i.last_hr_mm === null ? "" : `${fmtMm(i.last_hr_mm)} mm last hr`));
+  // an observed southerly
+  const sg = i.southerly_gust === null ? "" : `gust ${halfUp(i.southerly_gust)} km/h`;
+  if (i.southerly_seen === "coast") out.push(capped("southerly-arriving", SOUTHERLY_ARRIVING, "Southerly change arriving", `at ${i.southerly_station}`, ORANGE));
+  else if (i.southerly_seen === "here") out.push(capped("southerly-here", SOUTHERLY_HERE, "Southerly change", "arrived", ORANGE, sg));
+  // wind
+  const wind = halfUp(i.wind), gust = halfUp(i.gust);
+  let changing = i.dir_now !== null && i.dir_next !== null && turn(i.dir_now, i.dir_next) >= 90 && Math.max(i.wind, i.gust) >= 20;
+  if (changing && i.southerly_seen && compass(i.dir_next) === "S") changing = false;
+  if (changing) {
+    const to = compass(i.dir_next);
+    out.push(capped("wind-change", 55 + (to === "S" ? 10 : 0) + Math.max(0, i.gust - 40) * 0.5, to === "S" ? "Southerly change" : "Wind change", `${compass(i.dir_now)}→${to} gust ${gust} km/h`, ORANGE));
+  } else {
+    s = i.gust >= 40 || i.wind >= 30 ? 30 + Math.max(0, i.gust - 40) * 0.8 : i.gust >= 25 ? 10 : null;
+    if (s !== null) out.push(capped("wind", s, i.dir_next === null ? "Wind" : `Wind ${compass(i.dir_next)}`, `${wind} gust ${gust} km/h`, ORANGE));
+  }
+  // UV, against the normal for this month and hour
+  if (i.hour < 18) {
+    const uv = halfUp(i.uv);
+    if (uv >= normalUv(i.month, i.hour + 1) + 2) out.push(capped("uv", 40, "UV, above normal", `${uv} ${uvLabel(uv)}`, ORANGE));
+    else if (uv >= 8) out.push(capped("uv", 12, "UV", `${uv} ${uvLabel(uv)}`, ORANGE));
+  }
+  // the forecast day's high, against normal
+  if (i.high !== null) {
+    const hi = halfUp(i.high), dev = hi - halfUp(normalMax(i.high_month));
+    s = hi >= 38 ? 75 : hi >= 35 ? 55 : Math.abs(dev) >= 6 ? 30 : null;
+    if (s !== null) out.push(capped("high", s, (i.evening ? "Tomorrow" : "Today") + " vs normal", `${dev > 0 ? "+" : ""}${dev}° (${hi}°)`, dev > 0 ? RED : BLUE));
+  }
+  return out.map((f, n) => [f, n]).sort((a, b) => b[0].score - a[0].score || a[1] - b[1]).map((x) => x[0]); // stable, like sorted()
+}
+const refreshMinutes = (facts) => { const top = facts.length ? facts[0].score : 0; const t = REFRESH_TIERS.find(([f]) => top >= f); return t ? t[1] : null; };
+const shownState = (facts) => facts.slice(0, SHOWN_FACTS).map((f) => [f.key, f.score]);
+/* facts.worth_redrawing, returning the reason (or null for "roughly the same"). */
+function redrawReason(drawn, now) {
+  const a = new Set(drawn.map((x) => x[0])), b = new Set(now.map((x) => x[0]));
+  const added = [...b].filter((k) => !a.has(k)), gone = [...a].filter((k) => !b.has(k));
+  if (added.length || gone.length) return [added.length ? `${added.join(", ")} appeared` : "", gone.length ? `${gone.join(", ")} went` : ""].filter(Boolean).join("; ");
+  if (drawn.length && now.length && drawn[0][0] !== now[0][0]) return `the hero changed kind (${drawn[0][0]} → ${now[0][0]})`;
+  const before = Object.fromEntries(drawn);
+  for (const [k, s] of now) {
+    if (s - before[k] > WORSE_BY) return `${k} rose ${before[k]} → ${s} (more than ${WORSE_BY})`;
+    if (before[k] - s > BETTER_BY) return `${k} fell ${before[k]} → ${s} (more than ${BETTER_BY})`;
+  }
+  return null;
+}
+
+/* =====================================================================
+   Synthetic pictures, drawn straight in the inks
+   ===================================================================== */
+const BAYER8 = (() => { let m = [[0]]; for (let n = 1; n < 8; n *= 2) { const r = []; for (let y = 0; y < 2 * n; y++) { r.push([]); for (let x = 0; x < 2 * n; x++) { const q = [0, 2, 3, 1][(y >= n ? 2 : 0) + (x >= n ? 1 : 0)]; r[y].push(4 * m[y % n][x % n] + q); } } m = r; } return m; })();
+function inkData(w, h) { return new ImageData(w, h); }
+function putInk(img, x, y, ink) { const i = (y * img.width + x) * 4, c = INK_RGB[ink]; img.data[i] = c[0]; img.data[i + 1] = c[1]; img.data[i + 2] = c[2]; img.data[i + 3] = 255; }
+
+/* A calm landscape: smooth bands, each a pair of inks mixed by a light 8x8 ordered dither. */
+const PHOTO_CACHE = new Map();
+function makePhoto(seed) {
+  if (PHOTO_CACHE.has(seed)) return PHOTO_CACHE.get(seed);
+  const w = 500, h = 480, img = inkData(w, h), ph = seed * 1.7, sunX = 300 + (seed * 67) % 140, sunY = 90 + (seed * 37) % 50;
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const r1 = 250 + 46 * Math.sin(x / 74 + ph) + 20 * Math.sin(x / 29 + 1 + ph * 0.6);
+    const r2 = 312 + 26 * Math.sin(x / 101 + 2 + ph * 0.3);
+    const r3 = 382 + 7 * Math.sin(x / 63 + ph);
+    const th = (BAYER8[y & 7][x & 7] + 0.5) / 64;
+    let a, b, t;
+    const ds = Math.hypot(x - sunX, y - sunY);
+    if (y < r1) {
+      if (ds < 30) { a = YELLOW; b = ORANGE; t = ds > 26 ? 0.5 : 0; }
+      else { a = WHITE; b = BLUE; t = 0.04 + 0.42 * Math.pow(1 - y / r1, 1.6) - (ds < 70 ? 0.14 * (1 - ds / 70) : 0); }
+    } else if (y < r2) { a = BLUE; b = WHITE; t = 0.14 - 0.14 * (y - r1) / Math.max(1, r2 - r1); }
+    else if (y < r3) { a = GREEN; b = BLACK; t = 0.02 + 0.22 * (y - r2) / Math.max(1, r3 - r2); }
+    else { a = YELLOW; b = GREEN; t = 0.16 + 0.06 * Math.sin(x / 47 + ph) + 0.14 * (y - r3) / (h - r3); }
+    putInk(img, x, y, th < t ? b : a);
+  }
+  PHOTO_CACHE.set(seed, img);
+  return img;
+}
+const PHOTO_TITLES = [["Mountain lake at first light", "A wooden footbridge over a still lagoon, with forested hills and far mountains behind it in the evening light"],
+  ["Ridges above a valley meadow", "Layered blue ridges fading into haze above a meadow of late-summer grass, seen from a lookout on a clear afternoon"]];
+
+/* A synthetic warning map in the fixed map inks (the fixture's geometry, fitted to 448 x 480).
+   No agency name on it: it must never pass for a real issued map. */
+let MAP_IMG = null;
+function makeMap() {
+  if (MAP_IMG) return MAP_IMG;
+  const cv = document.createElement("canvas"); cv.width = 448; cv.height = 480;
+  const d = new Rec(cv.getContext("2d", { willReadFrequently: true })), k = 448 / 700;
+  d.rect(0, 0, 447, 479, WHITE);
+  d.polygon([[700, 0], [518, 0], [469, 465], [392, 750], [700, 750]].map(([x, y]) => [x * k, y * k]), BLUE);
+  d.ellipse(200 * k, 100 * k, 420 * k, 520 * k, YELLOW);
+  d.ellipse(280 * k, 280 * k, 400 * k, 420 * k, ORANGE);
+  d.ellipse(300 * k, 320 * k, 350 * k, 380 * k, RED);
+  for (const [x1, y1, x2, y2] of [[0, 250, 470, 220], [90, 0, 190, 750], [0, 520, 440, 560]]) d.line([[x1 * k, y1 * k], [x2 * k, y2 * k]], GREEN, 2);
+  for (const [n, x, y] of [["Chatswood", 356, 410], ["Ashfield", 325, 456], ["Sydney", 360, 515], ["Strathfield", 234, 437]]) {
+    d.rect(x * k - 2, y * k - 2, x * k + 2, y * k + 2, BLACK); d.text(x * k + 6, y * k - 7, n, SANS(11), BLACK);
+  }
+  snap(d.ctx, 448, 480);
+  MAP_IMG = d.ctx.getImageData(0, 0, 448, 480);
+  return MAP_IMG;
+}
+
+/* ---- the rain radar, synthetic: 512 x 512 at 0.25 km/px around a site north of the city ---- */
+const RADAR = { width: 512, height: 512, km_per_px: 0.25, site_lat: -33.701, site_lon: 151.21, range_km: 64, name: "Sydney" };
+const RAIN_NEAR_KM = 64, RAIN_MIN_PIXELS = 12, RAIN_COUNT_FROM_LEVEL = 2, CLUSTER_MIN_PIXELS = 160, FAST_GAP_S = 240, NORMAL_GAP_S = 600;
+const BANDS = [[2, 1], [5, 2], [8, 3], [12, 4]], BAND_NAMES = ["none", "blue", "green", "yellow/orange", "red"];
+const BASE_COAST = 1, BASE_RING = 2, BASE_LABEL = 3;
+// radar_poster.RAIN_INKS: level -> (base ink, stipple ink, sixteenths of stipple)
+const RAIN_INKS = { 1: [WHITE, BLUE, 3], 2: [WHITE, BLUE, 6], 3: [WHITE, BLUE, 10], 4: [BLUE, BLUE, 0], 5: [BLUE, GREEN, 8], 6: [GREEN, BLUE, 4], 7: [GREEN, GREEN, 0],
+  8: [YELLOW, YELLOW, 0], 9: [YELLOW, ORANGE, 8], 10: [ORANGE, ORANGE, 0], 11: [ORANGE, RED, 8], 12: [RED, RED, 0], 13: [RED, RED, 0], 14: [RED, BLACK, 4], 15: [RED, BLACK, 8] };
+const BAYER4 = [[0, 8, 2, 10], [12, 4, 14, 6], [3, 11, 1, 9], [15, 7, 13, 5]];
+const rainInk = (level, x, y) => { const [b, s, n] = RAIN_INKS[level]; return BAYER4[y & 3][x & 3] < n ? s : b; };
+function pixelOf(lat, lon) {
+  const kx = 111.32 * Math.cos(RADAR.site_lat * Math.PI / 180), ky = 110.57;
+  return [RADAR.width / 2 + (lon - RADAR.site_lon) * kx / RADAR.km_per_px, RADAR.height / 2 - (lat - RADAR.site_lat) * ky / RADAR.km_per_px];
+}
+const PLACES = [["Gosford", -33.425, 151.342], ["Penrith", -33.751, 150.694], ["Manly", -33.797, 151.287],
+  ["Liverpool", -33.92, 150.92], ["Campbelltown", -34.065, 150.814], ["Cronulla", -34.058, 151.152], ["Homebush", -33.866, 151.08], ["Sydney", -33.87, 151.21]];
+let RADAR_BASE = null;
+function radarBase() { // base classes: an invented coastline, dotted range rings, place dots and names
+  if (RADAR_BASE) return RADAR_BASE;
+  const n = 512, cv = document.createElement("canvas"); cv.width = n; cv.height = n; const c = cv.getContext("2d", { willReadFrequently: true });
+  const base = new Uint8Array(n * n);
+  const stamp = (cls) => { const px = c.getImageData(0, 0, n, n).data; for (let i = 0; i < n * n; i++) if (px[i * 4 + 3] >= 128) base[i] = Math.max(base[i], cls); c.clearRect(0, 0, n, n); };
+  c.strokeStyle = "#000"; c.lineWidth = 1.6; c.beginPath();
+  for (let y = 0; y <= n; y += 4) { const x = 330 + 22 * Math.sin(y / 47) + 9 * Math.sin(y / 13 + 2) - (y > 300 && y < 340 ? 40 * Math.sin((y - 300) / 40 * Math.PI) : 0); y ? c.lineTo(x, y) : c.moveTo(x, y); }
+  c.stroke(); stamp(BASE_COAST);
+  c.lineWidth = 1; c.beginPath(); c.arc(256, 256, 128, 0, 7); c.moveTo(512, 256); c.arc(256, 256, 255.5, 0, 7); c.moveTo(0, 256.5); c.lineTo(512, 256.5); c.moveTo(256.5, 0); c.lineTo(256.5, 512); c.stroke(); stamp(BASE_RING);
+  c.fillStyle = "#000"; c.font = `bold 11px ${FAM.sans}`;
+  for (const [name, lat, lon] of PLACES) { const [x, y] = pixelOf(lat, lon); c.fillRect(Math.round(x) - 2, Math.round(y) - 2, 5, 5); c.fillText(name, x + 6, y + 4); }
+  stamp(BASE_LABEL);
+  RADAR_BASE = base; return base;
+}
+function hash2(x, y) { let h = (x * 374761393 + y * 668265263) ^ 0x5bd1e995; h = Math.imul(h ^ (h >>> 13), 1274126177); return ((h ^ (h >>> 16)) >>> 0) / 4294967296; }
+function valueNoise(x, y, cell) { const gx = Math.floor(x / cell), gy = Math.floor(y / cell), fx = x / cell - gx, fy = y / cell - gy, s = (t) => t * t * (3 - 2 * t);
+  const a = hash2(gx, gy), b = hash2(gx + 1, gy), c = hash2(gx, gy + 1), d = hash2(gx + 1, gy + 1); return a + (b - a) * s(fx) + (c - a) * s(fy) + (a - b - c + d) * s(fx) * s(fy); }
+let RADAR_KEY = "", RADAR_PLANE = null;
+function radarRain(s) { // a rain cell `rDist` km from home, plus optional clutter
+  const key = [s.rIntensity, s.rSize, s.rDist, s.rBearing, s.clutter].join("|");
+  if (key === RADAR_KEY) return RADAR_PLANE;
+  const n = 512, rain = new Uint8Array(n * n), [hx, hy] = pixelOf(HOME.lat, HOME.lon), b = s.rBearing * Math.PI / 180;
+  const cx = hx + Math.sin(b) * s.rDist / RADAR.km_per_px, cy = hy - Math.cos(b) * s.rDist / RADAR.km_per_px;
+  const R = s.rSize / RADAR.km_per_px, reach = Math.ceil(R * 1.6);
+  for (let y = Math.max(0, Math.floor(cy - reach)); y < Math.min(n, cy + reach); y++) for (let x = Math.max(0, Math.floor(cx - reach)); x < Math.min(n, cx + reach); x++) {
+    const dx = x - cx, dy = y - cy, u = dx * 0.87 + dy * 0.5, v = -dx * 0.5 + dy * 0.87, th = Math.atan2(v, u);
+    const r = Math.hypot(u / (R * 1.3), v / (R / 1.3)) * (1 + 0.12 * Math.sin(3 * th + 1) + 0.07 * Math.sin(5 * th));
+    if (r > 1.2) continue;
+    const f = s.rIntensity * Math.exp(-2.2 * r * r) * (0.82 + 0.36 * valueNoise(x, y, 6));
+    rain[y * n + x] = Math.max(1, Math.min(15, Math.floor(f + 0.5)));
+  }
+  if (s.clutter) { // level-1 ground clutter in the west, and specks up to ~70 px (none counts)
+    for (let y = 150; y < 420; y++) for (let x = 20; x < 150; x++) if (!rain[y * n + x] && valueNoise(x, y, 9) > 0.72 && hash2(x, y) > 0.35) rain[y * n + x] = 1;
+    for (const [sx, sy, rr, lv] of [[70, 120, 4.2, 3], [150, 450, 3.5, 6], [420, 90, 2.5, 9], [460, 380, 4.4, 4]]) for (let y = sy - 6; y <= sy + 6; y++) for (let x = sx - 6; x <= sx + 6; x++) if (Math.hypot(x - sx, y - sy) <= rr) rain[y * n + x] = lv;
+  }
+  RADAR_KEY = key; RADAR_PLANE = rain; return rain;
+}
+/* radar.counted_rain + analyse: levels 2 and up, in 8-connected clusters of at least 160 px. */
+function analyseRadar(rain) {
+  const n = 512, counted = new Uint8Array(n * n), seen = new Uint8Array(n * n), stack = new Int32Array(n * n);
+  let biggest = 0, total = 0;
+  for (let start = 0; start < n * n; start++) {
+    if (rain[start] < RAIN_COUNT_FROM_LEVEL || seen[start]) continue;
+    let sp = 0, cluster = []; stack[sp++] = start; seen[start] = 1;
+    while (sp) { const i = stack[--sp]; cluster.push(i); const x = i % n, y = (i / n) | 0;
+      for (let yy = y - 1; yy <= y + 1; yy++) if (yy >= 0 && yy < n) for (let xx = x - 1; xx <= x + 1; xx++) if (xx >= 0 && xx < n) { const j = yy * n + xx; if (rain[j] >= RAIN_COUNT_FROM_LEVEL && !seen[j]) { seen[j] = 1; stack[sp++] = j; } } }
+    biggest = Math.max(biggest, cluster.length);
+    if (cluster.length >= CLUSTER_MIN_PIXELS) { for (const i of cluster) counted[i] = rain[i]; total += cluster.length; }
+  }
+  const [hx, hy] = pixelOf(HOME.lat, HOME.lon), r = RAIN_NEAR_KM / RADAR.km_per_px;
+  let nearPx = 0, nearest = null, heaviest = 0;
+  for (let y = Math.max(0, Math.ceil(hy - r)); y < Math.min(n, Math.floor(hy + r) + 1); y++) {
+    const half = Math.sqrt(Math.max(0, r * r - (y - hy) ** 2));
+    for (let x = Math.max(0, Math.ceil(hx - half)); x < Math.min(n, Math.floor(hx + half) + 1); x++) {
+      const v = counted[y * n + x]; if (!v) continue;
+      nearPx++; heaviest = Math.max(heaviest, BANDS.reduce((o, [lo, bd]) => (v >= lo ? bd : o), 0));
+      const dkm = Math.hypot(x - hx, y - hy) * RADAR.km_per_px; nearest = nearest === null ? dkm : Math.min(nearest, dkm);
+    }
+  }
+  const near = nearPx >= RAIN_MIN_PIXELS;
+  return { near, nearPx: near ? nearPx : 0, nearest: near ? nearest : null, heaviest: near ? heaviest : 0, biggest, visible: total >= CLUSTER_MIN_PIXELS, minGap: near ? FAST_GAP_S : NORMAL_GAP_S };
+}
+function radarImage(s) { // radar_poster.ink_plane, cropped to the 500 x 480 picture area around the site
+  const rain = radarRain(s), base = radarBase(), w = 500, h = 480, x0 = 6, y0 = 16, img = inkData(w, h);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const i = (y + y0) * 512 + x + x0, b = base[i], lv = rain[i];
+    let ink = WHITE;
+    if (b === BASE_LABEL) ink = BLACK;
+    else if (lv) ink = rainInk(lv, x, y);
+    else if (b === BASE_COAST) ink = GREEN;
+    else if (b === BASE_RING) ink = (x + y) % 2 === 0 ? GREEN : WHITE;
+    putInk(img, x, y, ink);
+  }
+  return { img, analysis: analyseRadar(rain), home: pixelOf(HOME.lat, HOME.lon).map((v, k) => v - (k ? y0 : x0)) };
+}
+
+/* Snap every pixel back to one of the seven inks. Anti-aliased edges are
+   blends of two inks, so each colour is read as the nearer end of the
+   two-ink blend that explains it best. */
+const SNAP = new Map();
+function snapIndex(r, g, b) {
+  const key = (r << 16) | (g << 8) | b; let v = SNAP.get(key); if (v !== undefined) return v;
+  let best = Infinity; v = 0;
+  for (let i = 0; i < 7; i++) { const c = INK_RGB[i], dd = (r - c[0]) ** 2 + (g - c[1]) ** 2 + (b - c[2]) ** 2; if (dd < best) { best = dd; v = i; } }
+  if (best > 0) for (let i = 0; i < 7; i++) for (let j = i + 1; j < 7; j++) {
+    const a = INK_RGB[i], c = INK_RGB[j], e = [c[0] - a[0], c[1] - a[1], c[2] - a[2]], p = [r - a[0], g - a[1], b - a[2]];
+    const t = Math.max(0, Math.min(1, (p[0] * e[0] + p[1] * e[1] + p[2] * e[2]) / (e[0] ** 2 + e[1] ** 2 + e[2] ** 2)));
+    const res = (p[0] - t * e[0]) ** 2 + (p[1] - t * e[1]) ** 2 + (p[2] - t * e[2]) ** 2;
+    if (res < best) { best = res; v = t < 0.5 ? i : j; }
+  }
+  SNAP.set(key, v); return v;
+}
+function snap(ctx, w, h) {
+  const im = ctx.getImageData(0, 0, w, h), d = im.data;
+  for (let i = 0; i < d.length; i += 4) { const c = INK_RGB[snapIndex(d[i], d[i + 1], d[i + 2])]; d[i] = c[0]; d[i + 1] = c[1]; d[i + 2] = c[2]; d[i + 3] = 255; }
+  ctx.putImageData(im, 0, 0);
+}
+
+/* =====================================================================
+   The side panel (render.draw_side and friends)
+   ===================================================================== */
+const CHART_MIN = 48, CHART_MAX = 130, SUN_ROW_H = 32, HERO_ICON = 62, RAIN_NOTE_BLUE_FROM = 30;
+const DAY_FONTS = [[BOLD, 30], [BOLD, 28], [BOLD, 26], [CB, 28], [CB, 26], [CB, 24], [CB, 22], [CB, 20]];
+const headerIconSize = (name) => (name.length >= 9 ? 40 : name.length >= 8 ? 48 : 56);
+function leadPair(P) { // the one max/min pair; the big one is whichever extreme comes next
+  if (P.isTomorrow) return [[BLUE, P.s.tMinT, "LOW TONIGHT"], [RED, P.s.tMaxT, "high tomorrow"]];
+  if (P.s.hour < P.s.leadAt) return [[BLUE, P.s.tMin, "OVERNIGHT LOW"], [RED, P.s.tMax, "high today"]];
+  return [[RED, P.s.tMax, "HIGH TODAY"], [BLUE, P.s.tMinT, "low tonight"]];
+}
+function header(d, x, y, P) {
+  d.section = "header";
+  const name = P.dayName, dateS = P.dateText, right = x + SIDE_W;
+  const [[ink, t, label], other] = leadPair(P);
+  let size = headerIconSize(name);
+  const num = deg(t), tw = Math.max(d.len(label, CB(10)), d.len(num, BOLD(34))), blockW = size + 4 + tw;
+  d.section = "header.pair";
+  weatherIcon(d, P.dayIcon, right - blockW, y, size);
+  d.text(right, y, label, CB(10), ink, "ra");
+  d.text(right, y + 13 - d.inkTop(BOLD(34), num), num, BOLD(34), ink, "ra");
+  const oy = y + Math.max(size, 13 + 36) + 2;
+  const [oInk, oT, oLabel] = other, val = deg(oT), vw = d.len(val, CB(12)), lab = oLabel + " ", otherW = vw + d.len(lab, C(12));
+  d.text(right - vw, oy, val, CB(12), oInk);
+  d.text(right - otherW, oy, lab, C(12), BLACK);
+  const bottom = oy + 15;
+  d.section = "header.day";
+  const avail = SIDE_W - Math.max(blockW, otherW) - 6;
+  let face; [face, size] = DAY_FONTS.find(([f, s]) => d.len(name, f(s)) <= avail) || DAY_FONTS[DAY_FONTS.length - 1];
+  d.text(x, y, fitText(d, name, face(size), avail), face(size), BLACK);
+  const dy = y + size + 4;
+  d.text(x, dy, fitText(d, dateS, C(18), avail), C(18), BLACK);
+  return Math.max(bottom, dy + 22) + 1;
+}
+function rainNote(s) { // the day's rain from the outlook, "80% · 2–8 mm"
+  const rng = s.rainRange ? s.rainRange.replace(/(\d) to (\d)/g, "$1–$2") : "";
+  const text = [`${s.dayRain}%`, rng].filter(Boolean).join(" · ");
+  return [text, s.dayRain >= RAIN_NOTE_BLUE_FROM ? BLUE : BLACK];
+}
+function forecastLine(d, P, x, y) {
+  const prefix = P.isTomorrow ? "Tomorrow: " : "", indent = prefix ? d.len(prefix, CB(14)) : 0, label = P.s.precis.trim() || "—";
+  const lines = wrap(d, label, C(14), SIDE_W, 2, indent), note = rainNote(P.s);
+  let inline = false;
+  if (lines.length) {
+    const tailW = d.len(" · " + note[0], C(14)), start = x + (lines.length === 1 ? indent : 0);
+    inline = start + d.len(lines[lines.length - 1], C(14)) + tailW <= x + SIDE_W;
+    if (!inline && lines.length === 2 && lines[1].endsWith("…") && tailW <= SIDE_W / 2) {
+      const rest = label.split(/\s+/).slice(lines[0].split(/\s+/).length).join(" ");
+      lines[1] = fitText(d, rest, C(14), SIDE_W - tailW); inline = true;
+    }
+  }
+  if (prefix) d.text(x, y, prefix.trim(), CB(14), ORANGE);
+  lines.forEach((line, i) => d.text(x + (i === 0 ? indent : 0), y + i * 17, line, C(14), BLACK));
+  let n = Math.max(1, lines.length);
+  if (inline) {
+    const lx = x + (lines.length === 1 ? indent : 0) + d.len(lines[lines.length - 1], C(14)), ny = y + (n - 1) * 17;
+    d.text(lx, ny, " · ", C(14), BLACK); d.text(lx + d.len(" · ", C(14)), ny, note[0], C(14), note[1]);
+  } else { d.text(x, y + n * 17, fitText(d, note[0], C(14), SIDE_W), C(14), note[1]); n += 1; }
+  return y + n * 17;
+}
+function hourLabel(h) { const f = (hr) => { hr %= 24; return [hr % 12 === 0 ? "12" : String(hr % 12), hr < 12 ? "am" : "pm"]; }; const [a, ap] = f(h), [b, bp] = f(h + 1); return `${a}${ap === bp ? "" : ap}–${b}${bp}`; }
+const hourIcon = (code) => (HAIL.includes(code) ? "hail" : describe(code)[1]);
+const glueUnits = (t) => t.replace(/ (mm|km\/h)\b/g, " $1");
+function hero(d, P, x, y) {
+  d.section = "hero";
+  const hr = P.coming, label = hourLabel(P.s.hour).toUpperCase(), temp = deg(hr.temp);
+  const colW = Math.max(d.len(label, CB(13)), d.len(temp, BOLD(50))), avail = SIDE_W - HERO_ICON - 4 - colW - 8;
+  let vf, values, notes, ink;
+  if (P.facts.length) {
+    const top = P.facts[0]; vf = CB(top.score >= 50 ? 18 : 16);
+    values = wrap(d, glueUnits(top.value), vf, avail, 3);
+    notes = wrap(d, glueUnits(top.label.toLowerCase() + (top.sub ? " · " + top.sub : "")), C(12), avail, 2); ink = top.ink;
+  } else { vf = CB(16); values = [describe(hr.code)[0]]; notes = ["nothing unusual"]; ink = BLACK; }
+  const vh = vf.size + 3, rightH = values.length * vh + notes.length * 14, colH = 13 + 4 + 37, h = Math.max(HERO_ICON, rightH, colH);
+  weatherIcon(d, hourIcon(hr.code), x, y + Math.floor((h - HERO_ICON) / 2), HERO_ICON);
+  const cx = x + HERO_ICON + 4, cy = y + Math.floor((h - colH) / 2);
+  d.text(cx, cy - d.inkTop(CB(13), label), label, CB(13), BLACK);
+  d.text(cx, cy + 17 - d.inkTop(BOLD(50), temp), temp, BOLD(50), BLACK);
+  d.section = "hero.fact";
+  let ry = y + Math.floor((h - rightH) / 2);
+  for (const v of values) { d.text(x + SIDE_W, ry, v, vf, ink, "ra"); ry += vh; }
+  for (const n of notes) { d.text(x + SIDE_W, ry, n, C(12), BLACK, "ra"); ry += 14; }
+  return y + h;
+}
+function factsTable(d, rows, x, y) {
+  d.section = "facts"; const right = x + SIDE_W;
+  for (const f of rows) {
+    const base = y + 14;
+    if (f.hazard) { d.text(x, base, f.value, CB(15), f.ink, "ls"); d.text(right, base, f.label, C(13), BLACK, "rs"); y += 18; continue; }
+    const vw = d.len(f.value, CB(15)), sub = f.sub ? ` · ${f.sub}` : "", sw = sub ? d.len(sub, C(12)) : 0, lw = d.len(f.label, C(13));
+    const ownLine = sub && lw + 8 + vw + sw > SIDE_W, vx = right - vw - (ownLine ? 0 : sw);
+    d.text(x, base, fitText(d, f.label, C(13), vx - x - 8), C(13), BLACK, "ls");
+    d.text(vx, base, f.value, CB(15), f.ink, "ls");
+    if (sub && !ownLine) d.text(vx + vw, base, sub, C(12), BLACK, "ls");
+    y += 18;
+    if (ownLine) { d.text(right, y + 11, sub.replace(/^[ ·]+/, ""), C(12), BLACK, "rs"); y += 14; }
+  }
+  return y;
+}
+const overlap = (a, b) => a[0] < b[2] && b[0] < a[2] && a[1] < b[3] && b[1] < a[3];
+function clampX(d, centre, text, f, x, width) { const half = d.len(text, f) / 2 + 2; return Math.min(Math.max(centre, x + half), x + width - half); }
+function hourlyChart(d, hours, x, y, width, height, nowHour) {
+  d.section = "chart";
+  const n = hours.length, step = width / n, base = y + height - 16;
+  const temps = hours.map((h) => h.temp), probs = hours.map((h) => Math.max(0, Math.min(100, h.rain_prob)));
+  const lo = Math.min(...temps), hi = Math.max(...temps), span = Math.max(4, hi - lo);
+  const ty = (t) => y + height - 18 - (t - lo) / span * (height - 40);
+  const barTop = (p) => base - (p > 4 ? p / 100 * (height - 38) : 0);
+  const cx = (i) => x + (i + 0.5) * step;
+  const bars = [];
+  probs.forEach((p, i) => { if (p > 4) { const x0 = x + i * step + 2; bars.push([Math.round(x0), Math.round(barTop(p)), Math.round(x0 + step - 5), Math.round(base)]); d.rect(x0, barTop(p), x0 + step - 5, base, BLUE); } });
+  d.line(temps.map((t, i) => [cx(i), ty(t)]), RED, 4);
+  const iNow = nowHour === null ? -1 : hours.findIndex((h) => h.hour === nowHour);
+  let nx = 0;
+  if (iNow >= 0) { // dashed: black over paper, white over a bar
+    nx = Math.floor(cx(iNow)); const c = d.ctx;
+    for (let yy = Math.floor(y + 4); yy < Math.floor(base); yy++) if ((yy - Math.floor(y + 4)) % 6 < 3) for (const xx of [nx - 1, nx]) {
+      const onBar = bars.some(([a, b, e, f]) => xx >= a && xx <= e && yy >= b && yy <= f);
+      c.fillStyle = CSS[onBar ? WHITE : BLACK]; c.fillRect(xx, yy, 1, 1);
+    }
+    d.polygon([[nx - 5, y], [nx + 5, y], [nx, y + 7]], BLACK);
+  }
+  d.line([[x, base], [x + width, base]], BLACK, 2);
+  hours.forEach((h, i) => { if (h.hour % 3 === 0) { const label = h.hour === 12 ? "12p" : `${h.hour % 12}${h.hour < 12 ? "a" : "p"}`; d.text(clampX(d, cx(i), label, C(12), x, width), y + height - 3, label, C(12), BLACK, "ms"); } });
+  // Labels: the extremes first, then the rain labels; nudge half a bar, then a whole bar, before dropping.
+  const avoid = iNow >= 0 ? [[nx - 2, y, nx + 3, base], [nx - 6, y, nx + 7, y + 8]] : [];
+  const boxAt = (px, yy, text, f) => d.bbox(px, yy, text, f, "ms", 2);
+  const place = (i, text, f, yy) => {
+    const home = clampX(d, cx(i), text, f, x, width);
+    if (!avoid.some((o) => overlap(boxAt(home, yy, text, f), o))) return [home, false];
+    for (const sh of [0.5, 1.0]) for (const sg of [1, -1]) { const px = home + sg * sh * step, b = boxAt(px, yy, text, f); if (b[0] >= x && b[2] <= x + width + 1 && !avoid.some((o) => overlap(b, o))) return [px, true]; }
+    return [null, true];
+  };
+  const keep = (text, f, px, yy) => avoid.push(boxAt(px, yy, text, f));
+  const iLo = temps.indexOf(lo), iHi = temps.indexOf(hi), extremes = [];
+  for (let [i, t, yy, ink] of [[iLo, deg(lo), ty(lo) - 6, BLUE], [iHi, deg(hi), ty(hi) - 6, RED]]) {
+    let [px] = place(i, t, CB(13), yy);
+    if (px === null) { const below = yy + 6 + 19; [px] = place(i, t, CB(13), below); if (px !== null) yy = below; }
+    if (px === null) px = clampX(d, cx(i), t, CB(13), x, width);
+    keep(t, CB(13), px, yy); extremes.push([t, px, yy, ink]);
+  }
+  const pMax = Math.max(...probs), pMin = Math.min(...probs), wanted = pMax > 4 ? [probs.indexOf(pMax)] : [];
+  if (pMin > 4 && !wanted.includes(probs.indexOf(pMin))) wanted.push(probs.indexOf(pMin));
+  for (const i of wanted) {
+    const p = probs[i], text = `${p}%`, inside = base - barTop(p) >= 14, yy = inside ? barTop(p) + 10 : barTop(p) - 3;
+    const [px, moved] = place(i, text, CB(10), yy); if (px === null) continue;
+    keep(text, CB(10), px, yy);
+    if (inside && !moved) d.text(px, yy, text, CB(10), WHITE, "ms", 2, BLUE); else d.text(px, yy, text, CB(10), BLUE, "ms", 2, WHITE);
+  }
+  for (const [t, px, yy, ink] of extremes) d.text(px, yy, t, CB(13), ink, "ms", 2, WHITE);
+}
+function sunMoon(d, P, x, y) {
+  d.section = "sun";
+  d.line([[x, y], [x + SIDE_W, y]], BLACK, 1); y += 5;
+  sunIcon(d, x + 6, y + 8, 4, true, [2, 5], 2, 1);
+  const [rise, set] = P.sun;
+  d.text(x + 16, y, `↑${clock(rise)} ↓${clock(set)}`, CB(14), BLACK);
+  const mins = Math.floor((Math.round(set * 60) - Math.round(rise * 60))), hrs = Math.floor(mins / 60);
+  d.text(x, y + 17, `${hrs}h ${String(mins % 60).padStart(2, "0")}m daylight`, C(12), BLACK);
+  const r = 13; moonIcon(d, x + SIDE_W - r - 1, y + 14, r, P.moon, HOME.lat < 0);
+  phaseName(P.moon).split(/ (.*)/s).filter(Boolean).forEach((word, i) => d.text(x + SIDE_W - 2 * r - 8, y + 1 + i * 14, word, C(13), BLACK, "ra"));
+}
+
+/* Hazards: the renderer's badge rules over a few made-up scenarios (central Sydney places). */
+const LEVEL_WORDS = { emergency: "emergency warning", watch: "watch and act", advice: "advice" };
+const AWS = { emergency: [RED, WHITE], watch: [ORANGE, BLACK], advice: [YELLOW, BLACK] }, AWS_WORDS = { emergency: "EMERGENCY", watch: "WATCH AND ACT", advice: "ADVICE" };
+const FIRE = { MODERATE: [GREEN, WHITE], HIGH: [YELLOW, BLACK], EXTREME: [ORANGE, BLACK], CATASTROPHIC: [RED, WHITE] };
+const hz = (kind, level, where, km, extra = {}) => ({ kind, level, where, km, specific: true, titled: false, detail: "", ...extra });
+function conditionsFor(s) {
+  if (s.picture === "map") return {
+    hazards: s.longWarn ? [hz("storm", "watch", "Severe Thunderstorm Warning", null, { titled: true, detail: "Sydney Metropolitan and Hawkesbury" }), hz("fire", "emergency", "Lane Cove National Park", 6),
+      hz("flood", "watch", "Cooks River at Canterbury", 0), hz("storm", "advice", "Western Sydney and Blue Mountains", null, { specific: false }),
+      hz("flood", "advice", "Flood Watch", null, { specific: false, titled: true, detail: "Hawkesbury-Nepean" })] : [hz("storm", "watch", "Severe Thunderstorm Warning", null, { titled: true })],
+    fire_ban: s.longWarn, unavailable: s.longWarn ? ["SES"] : [],
+    warning: { title: "Severe Thunderstorm Warning", area: "Sydney Metropolitan and Hawkesbury", issued: "5:38 pm", credit: "Map: synthetic example, not a real warning" },
+  };
+  return {
+    none: { hazards: [] }, ban: { hazards: [], fire_ban: true }, fire: { hazards: [hz("fire", "watch", "Lane Cove", 6)], fire_ban: true },
+    storm: { hazards: [hz("storm", "watch", "Severe Thunderstorm Warning", null, { titled: true })] },
+    many: { hazards: [hz("fire", "emergency", "Lane Cove National Park", 6), hz("flood", "watch", "Cooks River at Canterbury", 0), hz("storm", "advice", "Western Sydney", null, { specific: false })], fire_ban: true, fire_rating: "EXTREME", aqi: 160 },
+    nodata: { hazards: [], unavailable: ["SES"] },
+  }[s.hazard] || { hazards: [] };
+}
+function hazardText(h) { if (h.titled) return h.where.toUpperCase(); const where = h.km === null || h.km === 0 ? h.where : `${h.where} ${h.km.toFixed(0)} km`; return `${h.kind.toUpperCase()} · ${AWS_WORDS[h.level]} · ${where}`; }
+function listText(h) { if (h.titled) return h.where + (h.detail ? `: ${h.detail}` : ""); const where = h.km === null || h.km === 0 ? h.where : `${h.where} (${h.km.toFixed(0)} km)`; return `${h.kind[0].toUpperCase() + h.kind.slice(1)} ${LEVEL_WORDS[h.level]}: ${where}`; }
+function badgesFor(cond, overMap) {
+  const out = [], hs = cond.hazards || [], b = (text, fill, ink, small = false) => out.push({ text, fill, ink, small });
+  hs.filter((h) => h.level === "emergency").forEach((h) => b(hazardText(h), ...AWS.emergency));
+  hs.filter((h) => h.level !== "emergency" && h.specific).forEach((h) => (h.titled ? b(hazardText(h), WHITE, RED) : b(hazardText(h), ...AWS[h.level])));
+  if (cond.unavailable && cond.unavailable.length) b("NO LIVE HAZARD DATA: " + cond.unavailable.join(", "), WHITE, BLACK, true);
+  if (cond.fire_ban) b("TOTAL FIRE BAN", RED, WHITE, true);
+  hs.filter((h) => h.level !== "emergency" && !h.specific).forEach((h) => b(hazardText(h), WHITE, BLACK, true));
+  if (cond.fire_rating && cond.fire_rating !== "MODERATE") b(`FIRE DANGER  ${cond.fire_rating}`, ...FIRE[cond.fire_rating], true);
+  if (cond.aqi) { const fill = cond.aqi >= 151 ? RED : ORANGE; b(`AIR QUALITY ${cond.aqi >= 151 ? "UNHEALTHY" : "UNHEALTHY FOR SENSITIVE GROUPS"}`, fill, fill === RED ? WHITE : BLACK, true); }
+  const cap = overMap ? 2 : 4;
+  if (out.length > cap) { const extra = out.length - (cap - 1); out.splice(cap - 1); out.push({ text: `+${extra} MORE · HAZARDS NEAR ME`, fill: WHITE, ink: BLACK, small: true }); }
+  return out;
+}
+function drawBadges(d, cond) {
+  d.section = null; let x = 12, y = 12;
+  for (const bd of badgesFor(cond, false)) {
+    const f = bd.small ? BOLD(12) : BOLD(15), h = bd.small ? 22 : 28, text = fitText(d, bd.text, f, PHOTO_W - 2 * x - 22), w = Math.floor(d.len(text, f)) + 18;
+    d.rrect(x - 3, y - 3, x + w + 3, y + h + 3, Math.floor(h / 2) + 2, WHITE);
+    d.rrect(x, y, x + w, y + h, Math.floor(h / 2), bd.fill, BLACK, 2);
+    d.text(x + 9, y + (bd.small ? 3 : 5), text, f, bd.ink);
+    y += h + (bd.small ? 6 : 10);
+  }
+}
+function warningLines(cond, warning) {
+  const out = [];
+  for (const h of cond.hazards || []) if (h.specific && h.where !== warning.title) out.push(["• " + listText(h), h.level === "emergency" ? RED : BLACK]);
+  const broad = (cond.hazards || []).filter((h) => !h.specific).map(listText);
+  if (cond.fire_ban) broad.unshift("Total fire ban");
+  if (cond.unavailable && cond.unavailable.length) broad.push("no live data: " + cond.unavailable.join(", "));
+  if (broad.length) out.push(["Also: " + broad.join(" · "), BLACK]);
+  return out;
+}
+function captionLines(d, P) {
+  const lines = [], s = P.s;
+  if (P.warning) {
+    const w = P.warning;
+    wrap(d, w.title, CB(15), SIDE_W, 2).forEach((t) => lines.push([t, CB(15), RED]));
+    wrap(d, w.area || "", C(13), SIDE_W, 2).forEach((t) => lines.push([t, C(13), BLACK]));
+    lines.push([fitText(d, (w.issued ? "Issued " + w.issued + " · " : "") + w.credit, C(12), SIDE_W), C(12), BLACK]);
+    for (const [text, ink] of warningLines(P.cond, w)) wrap(d, text, C(13), SIDE_W, 2).forEach((t) => lines.push([t, C(13), ink]));
+  } else {
+    wrap(d, P.photo.title, CI(15), SIDE_W, 2).forEach((t) => lines.push([t, CI(15), BLACK]));
+    lines.push([fitText(d, P.photo.credit, C(12), SIDE_W), C(12), BLACK]);
+  }
+  let stamp = [HOME.name, "BOM · Open-Meteo", s.gauge === "station" ? "Horsley Park AWS" : ""].filter(Boolean).join(" · "), colour = BLACK;
+  if (+s.stale) { stamp = `${HOME.name} · forecast over ${+s.stale >= 24 ? "a day" : +s.stale >= 12 ? "12 h" : "3 h"} old`; colour = RED; }
+  lines.push([fitText(d, stamp, C(11), SIDE_W), C(11), colour]);
+  return lines;
+}
+function fitCaption(lines, yMin) { lines = lines.slice(); while (lines.length > 2 && H - 6 - sum(lines.map((l) => l[1].size + 3)) - 4 < yMin + 4) lines.splice(lines.length - 2, 1); return lines; }
+function drawCaption(d, lines, x, ruleY) { d.line([[x, ruleY], [x + SIDE_W, ruleY]], BLACK, 1); let y = ruleY + 4; for (const [t, f, ink] of lines) { d.text(x, y, t, f, ink); y += f.size + 3; } }
+
+function drawSide(d, P) {
+  let x = SIDE_X, y = 10;
+  y = header(d, x, y, P);
+  d.section = "forecast"; y = forecastLine(d, P, x, y);
+  d.section = "rule"; d.line([[x, y + 5], [x + SIDE_W, y + 5]], BLACK, 2); y += 13;
+  y = hero(d, P, x, y);
+  y = factsTable(d, P.facts.slice(1, 5), x, y + 4);
+  const lines = captionLines(d, P);
+  let sunH = SUN_ROW_H + 6; const chartMin = CHART_MIN + 8;
+  let kept = fitCaption(lines, y + chartMin + sunH);
+  if (P.warning && sunH && kept.length < lines.length) { sunH = 0; kept = fitCaption(lines, y + chartMin); }
+  const capTop = H - 6 - sum(kept.map((l) => l[1].size + 3)) - 4;
+  let bottom = capTop - 5;
+  if (sunH) { bottom -= sunH; sunMoon(d, P, x, bottom + 5); }
+  const chartH = Math.max(CHART_MIN, Math.min(CHART_MAX, Math.floor(bottom - (y + 8))));
+  hourlyChart(d, P.chartHours, x, y + 8, SIDE_W, chartH, P.isTomorrow ? null : P.s.hour);
+  d.section = "caption"; drawCaption(d, kept, x, capTop);
+  return { capTop, chartH, sunRow: !!sunH, captionLines: kept.length, captionWanted: lines.length };
+}
+
+/* test_panel.test_nothing_overflows, run live on whatever this page drew. */
+function fitIssues(d, L) {
+  const out = [], bx = d.boxes, need = ["header.day", "header.pair", "forecast", "hero", "hero.fact", "chart", "caption"];
+  for (const k of need) if (!bx[k]) out.push(`${k} missing`);
+  for (const [sec, [x0, y0, x1, y1]] of Object.entries(bx)) {
+    if (x0 < PHOTO_W + 4) out.push(`${sec} reaches into the picture`);
+    if (x1 > SIDE_X + SIDE_W + 1.5) out.push(`${sec} is ${Math.round(x1 - SIDE_X - SIDE_W - 1)} px too wide`);
+    if (y0 < 0 || y1 > H) out.push(`${sec} is off the poster`);
+    if (sec !== "caption" && y1 > L.capTop + 0.5) out.push(`${sec} runs ${Math.round(y1 - L.capTop)} px into the caption`);
+  }
+  if (bx["header.day"] && bx["header.pair"] && overlap(bx["header.day"], bx["header.pair"])) out.push("the day name runs into the temperatures");
+  if (bx.hero && bx["hero.fact"] && overlap(bx.hero, bx["hero.fact"])) out.push("the top fact runs into the coming hour");
+  const bands = [["header.day", "header.pair"], ["forecast"], ["hero", "hero.fact"], ["facts"], ["chart"], ["sun"], ["caption"]].map((b) => b.filter((k) => bx[k]).map((k) => bx[k])).filter((b) => b.length);
+  for (let i = 0; i + 1 < bands.length; i++) if (Math.max(...bands[i].map((b) => b[3])) > Math.min(...bands[i + 1].map((b) => b[1])) + 0.5) out.push("two bands of the panel overlap");
+  if (L.chartH < CHART_MIN || L.chartH > CHART_MAX) out.push("the chart is out of range");
+  if (bottomOfFacts(bx) + 8 + CHART_MIN > L.capTop - (L.sunRow ? SUN_ROW_H + 6 : 0) - 5 + 0.5) out.push("the chart is squeezed below its minimum");
+  return [...new Set(out)];
+}
+const bottomOfFacts = (bx) => Math.max(...["hero", "hero.fact", "facts"].filter((k) => bx[k]).map((k) => bx[k][3]));
+
+/* =====================================================================
+   Controls, presets, the render loop
+   ===================================================================== */
+const $ = (id) => document.getElementById(id);
+const IDS = ["date", "hour", "leadAt", "tMin", "tMax", "tMinT", "tMaxT", "bias", "cond", "rainP", "rainMm", "wind", "gust", "windFrom", "windTo", "uv", "gauge", "since9", "lastHr",
+  "southerly", "dayCond", "precis", "dayRain", "rainRange", "moon", "stale", "longTitle", "hazard", "longWarn", "rIntensity", "rSize", "rDist", "rBearing", "clutter", "showScores"];
+const NUMERIC = new Set(["hour", "leadAt", "tMin", "tMax", "tMinT", "tMaxT", "bias", "rainP", "rainMm", "wind", "gust", "windFrom", "windTo", "uv", "since9", "lastHr", "dayRain", "rIntensity", "rSize", "rDist", "rBearing"]);
+for (const id of ["cond", "dayCond"]) $(id).innerHTML = Object.entries(SKY_LABELS).map(([k, v]) => `<option value="${k}">${v}</option>`).join("");
+for (const id of ["windFrom", "windTo"]) $(id).innerHTML = DIRS.map((d, i) => `<option value="${i}">${d}</option>`).join("");
+
+// panel_fixtures.PRESETS (central Sydney), plus the lab's foggy dawn and a radar scene.
+const DEFAULTS = { date: "2026-11-14", windFrom: 1, windTo: 1, longTitle: true, picture: "photo", rainRange: "", gauge: "model", southerly: "none", bias: 0, leadAt: 9,
+  moon: "auto", stale: "0", longWarn: true, hazard: "none", rIntensity: 9, rSize: 6, rDist: 20, rBearing: 270, clutter: true };
+const WORST_HOT = { date: "2026-09-30", hour: 17, tMin: 29, tMax: 46, tMinT: 31, tMaxT: 47, cond: "hail", dayCond: "storm", rainP: 100, rainMm: 88, since9: 248, lastHr: 96,
+  wind: 98, gust: 148, windFrom: 7, windTo: 4, uv: 13, precis: "Very hot. Severe thunderstorms with giant hail, damaging winds and heavy rain likely in the afternoon and evening",
+  dayRain: 100, rainRange: "40 to 100 mm" };
+const STORM = { date: "2026-11-16", hour: 13, tMin: 19, tMax: 27, tMinT: 17, tMaxT: 24, cond: "storm", dayCond: "storm", rainP: 90, rainMm: 9, since9: 24, lastHr: 8, wind: 28, gust: 52,
+  windFrom: 3, windTo: 4, uv: 3, precis: "Showers and storms. Heavy falls possible", dayRain: 95, rainRange: "15 to 40 mm", longTitle: false };
+const PRESETS = [
+  ["Hot afternoon", { hour: 14, tMin: 18, tMax: 34, tMinT: 20, tMaxT: 31, cond: "clear", rainP: 5, rainMm: 0, wind: 14, gust: 24, uv: 10, dayCond: "clear", since9: 0, lastHr: 0, precis: "Sunny. Hot", dayRain: 5, hazard: "ban" }],
+  ["Cool morning", { hour: 7, tMin: 9, tMax: 22, tMinT: 11, tMaxT: 24, cond: "partly", rainP: 10, rainMm: 0, wind: 8, gust: 15, uv: 2, dayCond: "partly", since9: 0, lastHr: 0, precis: "Partly cloudy", dayRain: 10 }],
+  ["Evening", { hour: 21, tMin: 16, tMax: 30, tMinT: 15, tMaxT: 26, cond: "cloudy", rainP: 30, rainMm: 0, wind: 12, gust: 20, uv: 0, dayCond: "showers", since9: 0.4, lastHr: 0, precis: "Cloudy. Shower or two", dayRain: 40, rainRange: "0 to 2 mm" }],
+  ["Southerly arriving", { hour: 15, tMin: 21, tMax: 38, tMinT: 18, tMaxT: 25, cond: "partly", rainP: 20, rainMm: 0, wind: 22, gust: 35, windFrom: 7, windTo: 7, uv: 9, dayCond: "partly", since9: 1.4, lastHr: 0.2, precis: "Hot. Gusty southerly change late afternoon", dayRain: 30, gauge: "station", southerly: "coast" }],
+  ["Foggy dawn", { hour: 6, tMin: 11, tMax: 25, tMinT: 13, tMaxT: 27, cond: "fog", dayCond: "sunstorm", rainP: 5, rainMm: 0, since9: 0, lastHr: 0, wind: 4, gust: 9, uv: 0, precis: "Fog then sun. Afternoon storms", dayRain: 40 }],
+  ["Storm", { ...STORM }],
+  ["Radar: rain near home", { ...STORM, picture: "radar", rIntensity: 12, rSize: 9, rDist: 16, rBearing: 225 }],
+  ["Radar: clutter only", { ...STORM, cond: "cloudy", dayCond: "cloudy", rainP: 20, rainMm: 0, since9: 0, lastHr: 0, picture: "radar", rIntensity: 2, rSize: 2, rDist: 30, rBearing: 225, precis: "Cloudy", dayRain: 20, rainRange: "" }],
+  ["Worst: 46° hail, photo", { ...WORST_HOT, hazard: "fire" }],
+  ["Worst: 46° hail, map", { ...WORST_HOT, picture: "map" }],
+  ["Worst: −4° snow", { date: "2026-06-24", hour: 7, tMin: -4, tMax: 9, tMinT: -3, tMaxT: 8, cond: "snow", dayCond: "snow", rainP: 100, rainMm: 12, since9: 0, lastHr: 3, wind: 46, gust: 92, windFrom: 4, windTo: 6, uv: 1, precis: "Snow showers above 800 metres. Bitterly cold with damaging westerly winds", dayRain: 100, rainRange: "10 to 25 mm" }],
+  ["−10° sleet", { date: "2026-07-15", hour: 7, tMin: -10, tMax: 2, tMinT: -8, tMaxT: 4, cond: "snow", dayCond: "snow", rainP: 90, rainMm: 6, since9: 0, lastHr: 2, wind: 55, gust: 100, windFrom: 6, windTo: 6, uv: 1, precis: "Bitterly cold. Sleet and snow showers. Damaging westerly winds", dayRain: 90, rainRange: "5 to 15 mm", longTitle: false }],
+];
+$("presets").innerHTML = PRESETS.map(([n], i) => `<button type="button" data-preset="${i}">${n}</button>`).join("");
+
+let photoSeed = 0, drawn = null, lastFacts = [];
+function read() {
+  const s = {};
+  for (const id of IDS) { const el = $(id); s[id] = el.type === "checkbox" ? el.checked : NUMERIC.has(id) ? +el.value : el.value; }
+  s.picture = document.querySelector('input[name="picture"]:checked').value;
+  return s;
+}
+function show(s) {
+  const fmtH = (h) => `${h % 12 || 12}${h < 12 ? "am" : "pm"}`;
+  const out = { hour: `${fmtH(s.hour)}`, leadAt: fmtH(s.leadAt), tMin: `${s.tMin}°`, tMax: `${s.tMax}°`, tMinT: `${s.tMinT}°`, tMaxT: `${s.tMaxT}°`, bias: `${s.bias > 0 ? "+" : ""}${s.bias}°`,
+    rainP: `${s.rainP}%`, rainMm: `${s.rainMm} mm`, wind: s.wind, gust: s.gust, uv: s.uv, since9: `${s.since9}`, lastHr: `${s.lastHr}`, dayRain: `${s.dayRain}%`,
+    rIntensity: `L${s.rIntensity}`, rSize: `${s.rSize} km`, rDist: `${s.rDist} km` };
+  for (const [k, v] of Object.entries(out)) { const o = $(k + "-o"); if (o) o.textContent = v; }
+  $("photo-ctl").hidden = s.picture !== "photo" && s.picture !== "radar";
+  $("map-ctl").hidden = s.picture !== "map";
+  $("radar-ctl").hidden = s.picture !== "radar";
+}
+
+const ctx = $("poster").getContext("2d", { willReadFrequently: true });
+function render() {
+  const s = read(); show(s);
+  const [Y, M, D] = s.date.split("-").map(Number);
+  const isTomorrow = s.hour >= 18, nowDate = new Date(Date.UTC(Y, M - 1, D)), posterDate = new Date(Date.UTC(Y, M - 1, D + (isTomorrow ? 1 : 0)));
+  const fc = buildForecast(s), nxt = s.hour + 1, coming = fc.hours[nxt], current = fc.hours[s.hour];
+  // facts.inputs_for
+  let since9 = sum(fc.hours.slice(0, 24).filter((h) => h.hour > 9 && h.hour <= s.hour).map((h) => h.rain_mm)), lastHr = current.rain_mm;
+  if (s.gauge === "station") { since9 = s.since9; lastHr = s.lastHr; }
+  const stormsLater = fc.hours.slice(0, 24).some((h) => h.hour > nxt && (STORMS.includes(h.code) || HAIL.includes(h.code)));
+  const inputs = { hour: s.hour, month: M, code: coming.code, rain_prob: coming.rain_prob, rain_mm: coming.rain_mm, wind: coming.wind, gust: coming.gust, dir_now: current.wind_dir, dir_next: coming.wind_dir,
+    uv: coming.uv, since9_mm: since9, last_hr_mm: lastHr, storms_later: stormsLater, high: isTomorrow ? s.tMaxT : s.tMax, high_month: posterDate.getUTCMonth() + 1, evening: isTomorrow,
+    southerly_seen: s.southerly === "none" ? null : s.southerly, southerly_station: "Kurnell", southerly_gust: s.southerly === "here" ? s.gust : null };
+  const facts = scoreFacts(inputs); lastFacts = facts;
+  const cond = conditionsFor(s), warning = s.picture === "map" ? cond.warning : null;
+  const titles = PHOTO_TITLES[photoSeed % PHOTO_TITLES.length];
+  const radar = s.picture === "radar" ? radarImage(s) : null;
+  const hh = String(s.hour).padStart(2, "0");
+  const photo = radar ? { title: `Rain radar · ${hh}:00`, credit: `${RADAR.name} ${RADAR.range_km} km · synthetic, not BOM data` }
+    : { title: titles[s.longTitle ? 1 : 0], credit: "Photo: synthetic landscape, drawn by this page" };
+  const dayCode = CODES[s.dayCond];
+  const P = { s, isTomorrow, facts, cond, warning, photo,
+    coming: { temp: coming.temp, code: coming.code },
+    chartHours: fc.hours.slice(isTomorrow ? 24 : 0, isTomorrow ? 48 : 24).filter((h) => h.hour >= 6 && h.hour <= 21),
+    dayName: nowDate.toLocaleDateString("en-AU", { weekday: "long", timeZone: "UTC" }),
+    dateText: `${D} ${nowDate.toLocaleDateString("en-AU", { month: "long", timeZone: "UTC" })}`,
+    dayIcon: s.dayCond === "sunstorm" ? "storm" : describe(dayCode)[1],
+    sun: sunTimes(posterDate.getUTCFullYear(), posterDate.getUTCMonth() + 1, posterDate.getUTCDate()),
+    moon: s.moon === "auto" ? moonPhaseOn(posterDate.getUTCFullYear(), posterDate.getUTCMonth() + 1, posterDate.getUTCDate()) : +s.moon };
+
+  // The poster: picture, badges, side panel, then snap to the inks.
+  setLayout(warning ? 448 : 500);
+  const d = new Rec(ctx);
+  ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.fillStyle = CSS[WHITE]; ctx.fillRect(0, 0, W, H);
+  if (warning) ctx.putImageData(makeMap(), 0, 0);
+  else if (radar) ctx.putImageData(radar.img, 0, 0);
+  else ctx.putImageData(makePhoto(photoSeed), 0, 0);
+  if (radar) { // home ring and the "RADAR · hh:mm" pill (radar_poster.draw)
+    const [hx, hy] = radar.home;
+    for (const [r, ink, w] of [[8, WHITE, 5], [7, BLACK, 3], [6, RED, 1]]) d.ellipse(hx - r, hy - r, hx + r, hy + r, null, ink, w);
+    const text = `RADAR · ${hh}:00`, f = BOLD(15), tw = Math.floor(d.len(text, f)) + 18, px = 12, py = H - 12 - 28;
+    d.rrect(px - 3, py - 3, px + tw + 3, py + 31, 16, WHITE); d.rrect(px, py, px + tw, py + 28, 14, WHITE, BLACK, 2); d.text(px + 9, py + 5, text, f, BLACK);
+  }
+  if (!warning) drawBadges(d, cond);
+  d.boxes = {}; d.texts = [];
+  const L = drawSide(d, P);
+  snap(ctx, W, H);
+  present();
+
+  // Status: fit, re-check tier, radar test, redraw panel, scores.
+  const issues = fitIssues(d, L);
+  $("fit").className = "pill " + (issues.length ? "bad" : "ok");
+  $("fit").textContent = issues.length ? "⚠ " + issues.join("; ") : "fits: nothing clipped or squeezed";
+  const mins = refreshMinutes(facts);
+  $("tier").textContent = `Top score ${facts.length ? facts[0].score : 0}: ${mins ? `re-checks every ${mins} min` : "hourly redraw only"}` + (s.picture === "radar" ? ` · radar redraws at most every ${radar.analysis.minGap} s` : "");
+  if (radar) {
+    const a = radar.analysis;
+    $("radarInfo").innerHTML = `<div>Rain within 64 km of home: <b class="${a.near ? "yes" : "no"}">${a.near ? "yes" : "no"}</b></div>
+      <div>Largest level 2+ cluster: ${a.biggest.toLocaleString()} px (counts from ${CLUSTER_MIN_PIXELS})</div>
+      ${a.near ? `<div>Counted near home: ${a.nearPx.toLocaleString()} px, nearest ${a.nearest.toFixed(1)} km, heaviest band ${BAND_NAMES[a.heaviest]}</div>` : ""}
+      <div>Cadence: <b>min_gap_s ${a.minGap}</b> (${a.near ? "every new frame" : "at most every 10 min"})</div>
+      <div class="hint">Level 1 and specks under ${CLUSTER_MIN_PIXELS} px are drawn but never count, so clutter can't speed radar mode up.</div>`;
+  }
+  const [mHi, bomHi] = fc.notes[isTomorrow ? 1 : 0];
+  $("anchorNote").textContent = s.bias ? `The model's peak was ${Math.round((mHi) * 10) / 10}°; anchored to BOM's ${bomHi}°, which the chart and the header show.` : "The hourly model is stretched so its peak and overnight trough match BOM's max and min.";
+  updateRedraw(facts);
+}
+function updateRedraw(facts) {
+  const now = shownState(facts);
+  if (!drawn) $("redraw").textContent = "Nothing marked yet.";
+  else { const why = redrawReason(drawn, now); $("redraw").innerHTML = why ? `<b>Redraws at the next re-check:</b> ${why}.` : "<b>Roughly the same:</b> waits for the hourly redraw."; }
+  const sc = $("showScores").checked;
+  $("scores").innerHTML = !sc ? "" : facts.length ? `<table class="facts"><thead><tr><th>Fact</th><th>Value</th><th>Score</th><th>Shown as</th></tr></thead><tbody>${facts.map((f, i) =>
+    `<tr><td>${f.hazard ? f.value : f.label}</td><td>${f.hazard ? f.label : f.value}${f.sub ? " · " + f.sub : ""}</td><td class="n">${f.score}</td><td>${i === 0 ? "hero" : i < 5 ? "table" : "not shown"}</td></tr>`).join("")}</tbody></table>`
+    : `<p class="hint">No fact scores above 0: the hero says "nothing unusual".</p>`;
+}
+function applyPreset(i) {
+  const p = { ...DEFAULTS, ...PRESETS[i][1] };
+  for (const [k, v] of Object.entries(p)) { if (k === "picture") { $("pic-" + v).checked = true; continue; } const el = $(k); if (!el) continue; if (el.type === "checkbox") el.checked = v; else el.value = v; }
+  drawn = null; render();
+}
+
+/* ---- the frame's buttons ---- */
+function buildBoard() {
+  const holes = []; for (let i = 0; i < 26; i++) { const x = 92 + i * 30.8; holes.push(`<circle cx="${x}" cy="30" r="7" fill="#f3f2ee" stroke="#c9c6b8" stroke-width="1.5"/>`); if (i < 25) holes.push(`<rect x="${x + 7}" y="24" width="17" height="12" fill="url(#zig)"/>`); }
+  $("holes").innerHTML = holes.join("");
+  const names = ["A", "B", "C", "D", "E"], xs = [180, 330, 480, 630, 780];
+  $("buttons").innerHTML = xs.map((x, i) => `<circle class="led" id="led-${names[i]}" cx="${x}" cy="604" r="5" fill="#cfcbbf" stroke="#a9a596"/>
+    <circle cx="${x}" cy="634" r="19" fill="#2a2830" stroke="#14131a" stroke-width="2"/><circle cx="${x}" cy="634" r="11" fill="#3b3943"/>
+    <text x="${x + 34}" y="639">${names[i]}</text>`).join("");
+  const tips = { A: "A: refresh now (redraws this poster)", B: "B: a different photo for the rest of today", C: "C: radar mode on or off",
+    D: "D: not used by the Inky Almanac app", E: "E: held while plugging in, starts safe mode so a computer can connect (no app). Does nothing here." };
+  xs.forEach((x, i) => { const n = names[i], b = document.createElement("button"); b.type = "button"; b.className = "btn"; b.style.left = `${x / 960 * 100}%`; b.title = tips[n]; b.setAttribute("aria-label", tips[n]); b.dataset.btn = n; $("frame").appendChild(b); });
+}
+let lastPicture = "photo";
+function press(n) {
+  if (n === "D" || n === "E") return;
+  const led = $("led-" + n); led.classList.add("lit");
+  if (n === "B") photoSeed++;
+  if (n === "C") { const cur = read().picture; if (cur === "radar") $("pic-" + (lastPicture === "radar" ? "photo" : lastPicture)).checked = true; else { lastPicture = cur; $("pic-radar").checked = true; } }
+  const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches, fl = $("flash");
+  if (reduce) { render(); setTimeout(() => led.classList.remove("lit"), 400); return; }
+  fl.classList.remove("on"); void fl.offsetWidth; fl.classList.add("on");
+  setTimeout(render, 900);
+  setTimeout(() => { led.classList.remove("lit"); fl.classList.remove("on"); }, 1350);
+}
+
+/* ---- theme ---- */
+const THEMES = ["auto", "light", "dark"];
+function setTheme(t) { if (t === "auto") document.documentElement.removeAttribute("data-theme"); else document.documentElement.dataset.theme = t; $("theme").textContent = `Theme: ${t}`; try { localStorage.setItem("pg-theme", t); } catch (e) { /* file:// may refuse */ } }
+$("theme").addEventListener("click", () => setTheme(THEMES[(THEMES.indexOf($("theme").textContent.replace("Theme: ", "")) + 1) % 3]));
+try { setTheme(localStorage.getItem("pg-theme") || "auto"); } catch (e) { setTheme("auto"); }
+
+buildBoard();
+/* The poster is drawn at 800x480 and shown on a second canvas at the screen's
+   own resolution: scaled up pixel for pixel, scaled down with a high-quality
+   filter (a plain CSS downscale turns the ordered dither into moire). */
+function present() {
+  const v = $("view"), w = Math.max(1, Math.round(v.clientWidth * devicePixelRatio)), h = Math.round(w * 480 / 800);
+  if (v.width !== w || v.height !== h) { v.width = w; v.height = h; }
+  const c = v.getContext("2d"); c.imageSmoothingEnabled = w < 800; c.imageSmoothingQuality = "high"; c.drawImage($("poster"), 0, 0, w, h);
+}
+new ResizeObserver(present).observe($("view"));
+$("controls").addEventListener("input", (e) => { if (e.target.name === "picture" && e.target.value !== "radar") lastPicture = e.target.value; render(); });
+$("presets").addEventListener("click", (e) => { const b = e.target.closest("[data-preset]"); if (b) applyPreset(+b.dataset.preset); });
+$("frame").addEventListener("click", (e) => { const b = e.target.closest("[data-btn]"); if (b) press(b.dataset.btn); });
+$("mark").addEventListener("click", () => { drawn = shownState(lastFacts); updateRedraw(lastFacts); });
+applyPreset(0);
+// Redraw once the web fonts arrive (the first draw may use fallbacks).
+if (document.fonts) {
+  Promise.all([CB(14), C(14), BOLD(34), CI(15)].map((f) => document.fonts.load(f.css, "Ag°"))).catch(() => {}).then(render);
+  document.fonts.ready.then(render);
+}
+</script>
+</body>
+</html>

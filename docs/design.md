@@ -5,10 +5,16 @@ sources and refresh behaviour. It is here so a later change, by a person or an
 agent, does not quietly undo a decision whose reason is not visible in the
 code. If you change one of these behaviours, update the note and say why.
 
-The interactive mockup the side panel was designed in ("Inky Panel Lab", a
-private claude.ai artifact) has worst-case presets and a clipping detector. The
-renderer's own worst-case tests (`server/tests/panel_fixtures.py`,
-`test_panel.py`) are the source of truth now.
+The side panel was designed in an interactive mockup ("Inky Panel Lab").
+Its successor is the [playground](playground/index.html)
+(`docs/playground/index.html`), a self-contained page that redraws the current
+layout in JavaScript, with the worst-case presets, a clipping detector, the
+fact scores, the re-check tiers and a synthetic radar. **It is an
+approximation, written by hand from `render.py` and `facts.py`: the Python
+renderer is the source of truth**, and the renderer's worst-case tests
+(`server/tests/panel_fixtures.py`, `test_panel.py`) are what prove a layout
+fits. When you change a rule the playground shows, update the page too, or
+note on it that it lags.
 
 ## At a glance
 
@@ -31,6 +37,9 @@ The short version of the choices below, for a reader in a hurry:
 
 ## 1. What the poster is for
 
+- **Try it without a frame**: the [playground](playground/index.html) is a JS
+  approximation of the poster for exploring the rules. The Python renderer is
+  the source of truth.
 - **Glanceable from across the room.** The panel is 800×480 with seven inks,
   and a full refresh takes long enough to be noticed. Every element has to
   earn its place, and redraws are rationed (section 4).

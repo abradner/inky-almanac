@@ -105,6 +105,10 @@ docker run --rm -v "$PWD/server:/app" -v "$PWD/docs/img:/out" inky-almanac-test 
 
 - **Contributors and agents: start at [docs/README.md](docs/README.md)**,
   the index to the architecture, design decisions, gotchas and history.
+- **[Playground](docs/playground/index.html)**: try the poster's layout and
+  rules in a browser (a self-contained page; open it from a checkout). It is
+  a JavaScript approximation with synthetic pictures; the Python renderer is
+  the source of truth.
 - [Using the frame](docs/using-the-frame.md) · [Behaviours](docs/behaviours.md) ·
   [Development](docs/development.md) · [Data sources](docs/data-sources.md) ·
   [Operations](docs/operations.md) (updates, recovery, known limits)
