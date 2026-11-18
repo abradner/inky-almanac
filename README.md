@@ -17,6 +17,7 @@ and it shows the rain radar.
 
 All images are made by the real renderer for central Sydney, in estimated
 ink colours. **What every small behaviour means, and why: [docs/behaviours.md](docs/behaviours.md).**
+**Try it in your browser: [the playground](https://abradner.github.io/inky-almanac/).**
 
 ## What's on it
 
@@ -105,9 +106,10 @@ docker run --rm -v "$PWD/server:/app" -v "$PWD/docs/img:/out" inky-almanac-test 
 
 - **Contributors and agents: start at [docs/README.md](docs/README.md)**,
   the index to the architecture, design decisions, gotchas and history.
-- **[Playground](docs/playground/index.html)**: try the poster's layout and
-  rules in a browser (a self-contained page; open it from a checkout). It is
-  a JavaScript approximation with synthetic pictures; the Python renderer is
+- **[Playground](https://abradner.github.io/inky-almanac/)**: try the
+  poster's layout and rules in a browser (source:
+  [docs/playground/index.html](docs/playground/index.html)). It is a
+  JavaScript approximation with synthetic pictures; the Python renderer is
   the source of truth.
 - [Using the frame](docs/using-the-frame.md) · [Behaviours](docs/behaviours.md) ·
   [Development](docs/development.md) · [Data sources](docs/data-sources.md) ·
