@@ -188,10 +188,11 @@ def test_location_dots_land_where_the_geometry_puts_them(tmp_path):
 def test_rain_within_64_km_of_home():
     hx, hy = R.pixel_of(synthetic(), *HOME)
     px_per_km = 4
-    inside = synthetic([(round(hx), round(hy - 60 * px_per_km), 2)])  # 60 km north of home
-    outside = synthetic([(round(hx), round(hy - 70 * px_per_km), 2)])  # 70 km north (still on the image)
+    # 15x15 blobs: big enough to count as a cluster (R.CLUSTER_MIN_PIXELS)
+    inside = synthetic([(round(hx), round(hy - 60 * px_per_km), 7)])  # 60 km north of home
+    outside = synthetic([(round(hx), round(hy - 70 * px_per_km), 7)])  # 70 km north (still on the image)
     assert 0 <= hy - 70 * px_per_km  # the probe is on the image, so "outside" really tests the radius
-    assert R.rain_pixels(inside, *HOME, 64) == 25 and R.analyse(inside, HOME).near
+    assert R.rain_pixels(inside, *HOME, 64) == 225 and R.analyse(inside, HOME).near
     assert R.rain_pixels(outside, *HOME, 64) == 0 and not R.analyse(outside, HOME).near
     assert R.analyse(outside, HOME).visible  # still rain on the overlay
 
@@ -586,3 +587,212 @@ def test_no_radar_configured_refuses_radar_mode(tmp_path):
         assert e.value.code == 409 and app.radar.state() == {}
     finally:
         srv.shutdown()
+
+
+# ------------------------------------------------------------------ clutter is not rain (18 Nov 2026)
+
+# Two real IDR714 frames from a clear night: level-1 speckle (ground clutter)
+# west of Sydney around Penrith and Colo Heights, plus scattered small blobs of
+# higher levels, but no rain.
+CLUTTER = ("IDR714.T.202611181039.png", "IDR714.T.202611181044.png")
+
+
+def frame_from(name, issued=ISSUED):
+    return replace(synthetic(issued=issued), rain=bom_radar.rain_levels((FIX / name).read_bytes()))
+
+
+@pytest.mark.parametrize("name", CLUTTER)
+def test_clear_night_clutter_is_not_rain(name):
+    r = frame_from(name)
+    # Positive control: the raw frame is full of speckle near home, which the
+    # old rule (any 12 pixels) took for rain.
+    assert r.rain.count(1) > 7000 and R.rain_pixels(r, *HOME, 64) > 1000
+    a = R.analyse(r, HOME)
+    assert not a.near and not a.visible
+    assert R.min_gap_s(a) == 600
+
+
+def test_real_rain_still_counts_and_is_fast():
+    a = R.analyse(frame_from(FRAME), HOME)
+    assert a.near and a.visible and R.min_gap_s(a) == 240
+    assert a.heaviest == 4 and a.nearest_km < 1 and a.near_px > 10_000
+
+
+def plane_with(*runs, w=512, h=512):
+    """A rain plane with horizontal runs (x, y, length, level)."""
+    rain = bytearray(w * h)
+    for x, y, n, level in runs:
+        rain[y * w + x:y * w + x + n] = bytes([level]) * n
+    return bytes(rain)
+
+
+def near_home_run(n, level=5, dy=0):
+    hx, hy = R.pixel_of(synthetic(), *HOME)
+    x, y = round(hx) - n // 2, round(hy) + dy
+    return replace(synthetic(), rain=plane_with((x, y, n, level)))
+
+
+def test_a_cluster_counts_from_cluster_min_pixels():
+    n = R.CLUSTER_MIN_PIXELS
+    assert R.analyse(near_home_run(n), HOME).near
+    assert not R.analyse(near_home_run(n - 1), HOME).near
+
+
+def test_scattered_dots_never_add_up_to_rain():
+    hx, hy = R.pixel_of(synthetic(), *HOME)
+    dots = [(round(hx) - 100 + 3 * i, round(hy), 1, 6) for i in range(R.CLUSTER_MIN_PIXELS)]  # 160 apart
+    a = R.analyse(replace(synthetic(), rain=plane_with(*dots)), HOME)
+    assert R.rain_pixels(replace(synthetic(), rain=plane_with(*dots)), *HOME, 64) == R.CLUSTER_MIN_PIXELS
+    assert not a.near and not a.visible
+
+
+def test_level_one_never_counts_but_level_two_does():
+    big = 3 * R.CLUSTER_MIN_PIXELS
+    assert R.RAIN_COUNT_FROM_LEVEL == 2
+    assert not R.analyse(near_home_run(big, level=1), HOME).near
+    assert R.analyse(near_home_run(big, level=2), HOME).near
+
+
+def test_light_levels_are_still_drawn():
+    r = frame_from(CLUTTER[1])
+    plane = radar_poster.ink_plane(r, (0, 0, 512, 512))
+    speckle = [i for i, v in enumerate(r.rain) if v == 1]
+    assert sum(plane[i] == BLUE for i in speckle) > len(speckle) // 10  # the pale stipple is there
+    assert not R.analyse(r, HOME).near  # though it decides nothing
+
+
+def test_the_exit_fires_after_two_hours_of_clutter_only(tmp_path):
+    app = radar_app(tmp_path, radar=frame_from(CLUTTER[0]))
+    start = at_issue()
+    app.set_mode("radar", start)
+    t1 = start + timedelta(hours=1, minutes=59)
+    app.state["radar"] = frame_from(CLUTTER[1], issued=t1.timestamp() - 60)
+    assert app.alert_info(t1)["min_gap_s"] == 600  # clutter: the slow cadence
+    t2 = start + timedelta(hours=2)
+    app.state["radar"] = frame_from(CLUTTER[0], issued=t2.timestamp() - 60)
+    assert "mode" not in app.alert_info(t2)
+    assert app.radar.state()["why"] == "no rain"
+
+
+# ------------------------------------------------------------------ roughly the same: hold the id
+
+
+def near(px=1000, km=20.0, band=2, t=ISSUED):
+    return R.Analysis(t, True, True, near_px=px, nearest_km=km, heaviest=band)
+
+
+DRY = R.Analysis(ISSUED, False, False)
+
+
+def test_rain_arriving_or_leaving_is_worth_a_redraw():
+    assert R.worth_redrawing(DRY, near())
+    assert R.worth_redrawing(near(), DRY)
+    assert not R.worth_redrawing(DRY, R.Analysis(ISSUED + 300, True, False))  # rain far away only
+
+
+def test_nearest_rain_moving_boundary():
+    k = R.NEAREST_CHANGE_KM
+    assert not R.worth_redrawing(near(km=20), near(km=20 + k))
+    assert not R.worth_redrawing(near(km=20), near(km=20 - k))
+    assert R.worth_redrawing(near(km=20), near(km=20 + k + 0.1))
+    assert R.worth_redrawing(near(km=20), near(km=20 - k - 0.1))
+
+
+def test_rain_area_boundary():
+    f = R.AREA_CHANGE
+    assert not R.worth_redrawing(near(px=1000), near(px=round(1000 * (1 + f))))
+    assert not R.worth_redrawing(near(px=1000), near(px=round(1000 * (1 - f))))
+    assert R.worth_redrawing(near(px=1000), near(px=round(1000 * (1 + f)) + 1))
+    assert R.worth_redrawing(near(px=1000), near(px=round(1000 * (1 - f)) - 1))
+
+
+def test_heaviest_band_boundary():
+    assert R.band(8) == R.band(11) == 3 and R.band(12) == 4 and R.band(7) == 2 and R.band(1) == 0
+    assert not R.worth_redrawing(near(band=3), near(band=3))
+    assert R.worth_redrawing(near(band=3), near(band=4))
+    assert R.worth_redrawing(near(band=3), near(band=2))
+
+
+def test_alert_is_held_until_the_rain_changes_enough():
+    m = R.RadarMode(None, HOME, None)
+    t = at_issue()
+    first = m.alert(1.0, near(t=ISSUED), t)
+    assert first == "radar:%d" % ISSUED
+    same = near(px=1100, km=22, t=ISSUED + 300)  # a new frame, roughly the same
+    assert m.alert(1.0, same, t + timedelta(minutes=5)) == first
+    moved = near(px=1100, km=30, t=ISSUED + 600)
+    assert m.alert(1.0, moved, t + timedelta(minutes=10)) == "radar:%d" % (ISSUED + 600)
+
+
+def test_creeping_change_is_measured_from_what_was_drawn():
+    m = R.RadarMode(None, HOME, None)
+    t = at_issue()
+    m.alert(1.0, near(km=20), t)
+    m.alert(1.0, near(km=23, t=ISSUED + 300), t + timedelta(minutes=5))  # held
+    assert m.alert(1.0, near(km=26, t=ISSUED + 600), t + timedelta(minutes=10)) == "radar:%d" % (ISSUED + 600)
+
+
+def test_a_new_hour_takes_the_current_frame_as_drawn():
+    m = R.RadarMode(None, HOME, None)
+    t = datetime(2026, 11, 18, 21, 50, tzinfo=SYD)
+    first = m.alert(1.0, near(km=20), t)
+    assert m.alert(1.0, near(km=24, t=ISSUED + 600), t + timedelta(minutes=15)) == first  # 22:05: held...
+    # ...but the 22:00 poster drew the 24 km frame, so 28 km is not a 5 km move.
+    assert m.alert(1.0, near(km=28, t=ISSUED + 900), t + timedelta(minutes=20)) == first
+
+
+def test_a_render_for_another_moment_does_not_move_the_hold():
+    m = R.RadarMode(None, HOME, None)
+    t = at_issue()
+    first = m.alert(1.0, near(km=20), t)
+    assert m.alert(1.0, near(km=40, t=ISSUED + 300), t, persist=False) != first
+    assert m.alert(1.0, near(km=21, t=ISSUED + 600), t + timedelta(minutes=10)) == first
+
+
+def test_entering_again_starts_a_fresh_hold():
+    m = R.RadarMode(None, HOME, None)
+    t = at_issue()
+    m.alert(1.0, near(), t)
+    assert m.alert(2.0, near(t=ISSUED + 300), t) == "radar:%d" % (ISSUED + 300)
+
+
+def test_a_roughly_same_frame_keeps_the_poster(tmp_path):
+    hx, hy = R.pixel_of(synthetic(), *HOME)
+    blob = (round(hx), round(hy) - 80, 10)  # 20 km north, 441 px
+    app = radar_app(tmp_path, radar=synthetic([blob]))
+    now = at_issue()
+    app.set_mode("radar", now)
+    first = app.frame_info(now)
+    app.state["radar"] = synthetic([(blob[0] + 2, blob[1], 10)], issued=ISSUED + 300)  # drifted 0.5 km
+    later = app.frame_info(now + timedelta(minutes=5))
+    assert later["alert"] == first["alert"] and later["hash"] == first["hash"]
+    app.state["radar"] = synthetic([(blob[0], blob[1] - 40, 10)], issued=ISSUED + 600)  # 10 km further
+    moved = app.frame_info(now + timedelta(minutes=10))
+    assert moved["alert"] != first["alert"] and moved["hash"] != first["hash"]
+
+
+def test_clusters_join_diagonally():
+    hx, hy = R.pixel_of(synthetic(), *HOME)
+    n = R.CLUSTER_MIN_PIXELS
+    rain = bytearray(512 * 512)
+    for i in range(n):  # a diagonal staircase: 8-connected, not 4-connected
+        rain[(round(hy) - n // 2 + i) * 512 + round(hx) - n // 2 + i] = 5
+    assert R.analyse(replace(synthetic(), rain=bytes(rain)), HOME).near
+
+
+def test_a_big_cluster_barely_inside_the_radius_is_not_near():
+    import math
+
+    hx, hy = R.pixel_of(synthetic(), *HOME)
+    x, top = round(hx), math.ceil(hy - R.RAIN_NEAR_KM / 0.25)  # first row inside the circle, above home
+
+    def column(rows_inside):  # 3 px wide, from the top of the image down to just inside the circle
+        rain = bytearray(512 * 512)
+        for y in range(0, top + rows_inside):
+            rain[y * 512 + x - 1:y * 512 + x + 2] = b"\x05" * 3
+        return replace(synthetic(), rain=bytes(rain))
+
+    few, enough = column(3), column(6)  # 9 and 18 pixels inside
+    assert R.rain_pixels(few, *HOME, 64) == 9 and R.CLUSTER_MIN_PIXELS <= few.rain.count(5)
+    assert R.analyse(few, HOME).visible and not R.analyse(few, HOME).near
+    assert R.analyse(enough, HOME).near
