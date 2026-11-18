@@ -86,7 +86,7 @@ most tests live.
 | `observed.py` | rain since 9 am and last hour, southerly detection, freshness, from station logs (pure) |
 | `normals.py` | the `Normals` interface (`normal_max`, `normal_uv`) and a placeholder table |
 | `schedule.py` | next wake (HH:01 within the refresh window, computed in UTC), poster day (tomorrow from 18:00), hour slot |
-| `radar.py` | radar mode's rules: entering, leaving, rain near home, `min_gap_s`, reissue-proof hazard keys (pure) |
+| `radar.py` | radar mode's rules: what counts as rain (not clutter), entering, leaving, rain near home, `min_gap_s`, the roughly-same hold, reissue-proof hazard keys |
 | `render.py` | the poster: photo or map or radar on the left, the side panel, chart, badges, caption |
 | `radar_poster.py` | a radar frame drawn in fixed inks and stipples |
 | `dither.py` | Atkinson dithering in CIELAB; `map_ink`, the fixed ink table for BOM warning maps |

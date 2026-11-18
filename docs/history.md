@@ -38,6 +38,7 @@ central-Sydney defaults and the real configuration gitignored.
 | #8 | 16 Nov | `docs/design.md` | keep the reasons from being lost |
 | #9 | 16 Nov | BOM wins where it publishes a figure; the day's rain is back | the header said 21° while the chart said 18° |
 | #10 | 16 Nov | Radar mode on button C | see rain arriving, on demand |
+| #11 | 18 Nov | Radar clutter is not rain; hold radar redraws while the rain near home is roughly the same | on a clear night, ground clutter kept radar mode redrawing every frame and never let it end |
 
 The panel redesign behind #6 was worked out in an interactive mockup
 ("Inky Panel Lab", a private claude.ai artifact) with worst-case presets

@@ -191,6 +191,14 @@ at 0.25 km per pixel (rings at 80/160/240 px are 20/40/60 km); `IDR713` is
 Palette indices vary between frames: match rain colours by RGB. List only
 `IDR714.T.*` (the server globs NLST); the full listing is about 1 MB.
 
+**Radar clutter looks like rain.** On a clear night, ground clutter west of
+Sydney paints thousands of pixels of BOM's faintest level, plus scattered
+specks of other levels up to 76 pixels, which once kept radar mode on a
+5-minute cadence and stopped the no-rain exit. Decisions count only levels
+2 and up in connected clusters of at least 160 pixels (`radar.py`); the
+poster still draws everything. Two clear-night frames are recorded as
+fixtures alongside the 16 Nov rain frame.
+
 **RFS's "today" is relative to the fetch.** After an offline night, the
 cached feed's "today" is yesterday's. `rfs_fire_danger.py` dates the feed
 by when it was fetched.

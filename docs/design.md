@@ -233,8 +233,11 @@ The rules live in `server/almanac/radar.py` and are pure.
   run while the frame sleeps, and the status page needs a button too, so the
   frame can't be the source of truth.
 - **It ends by itself** at whichever comes first: local midnight, or at
-  least 2 hours in with the newest frame showing no rain (fewer than 12 rain
-  pixels anywhere, so clutter can't hold it open). A stale (over 20 minutes)
+  least 2 hours in with the newest frame showing no rain. "Rain" means
+  levels 2 and up in connected clusters of at least 160 pixels (10 km²):
+  on a clear night (18 Nov) level-1 ground clutter and specks up to 76
+  pixels had kept the mode open and the cadence fast. The poster still
+  draws every level. A stale (over 20 minutes)
   or missing frame never ends it early. Entering at 23:00 gives an hour.
 - **A new warning ends it**, so the warning's map shows. "New" means a
   specific hazard whose `(kind, level, where)` wasn't in force while radar
@@ -248,7 +251,13 @@ The rules live in `server/almanac/radar.py` and are pure.
   `min_gap_s`, and the id gains `radar:<frame time>`. `min_gap_s` is 240
   with rain within 64 km of home (under BOM's ~5-minute cadence, so every
   new frame draws), otherwise 600. The frame clamps it to 240–600 and treats
-  anything else as 600. A change of mode redraws at once. In normal mode
+  anything else as 600. A change of mode redraws at once. **Roughly the
+  same frame waits:** the radar part of the id changes only when the
+  counted rain near home arrives or leaves, its nearest pixel moves more
+  than 5 km, its area changes by more than 25%, or its heaviest band (blue,
+  green, yellow/orange, red; bands, because adjacent levels flicker inside a
+  storm) changes, measured against the last frame drawn; the first check in
+  a new hour re-baselines, as for facts. In normal mode
   `/alert.json` answers exactly as it did before radar mode existed.
 - **Battery never stays awake for it.** On battery the radar shows at the
   usual hourly wakes; the fast cadence needs USB power.

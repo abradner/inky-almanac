@@ -91,8 +91,17 @@ otherwise.
 - **Geometry**: the radar site is the image centre, 0.25 km per pixel at the
   64 km range (verified from the range rings and town dots). "Rain within
   64 km" counts rain pixels inside that circle around home; the part of the
-  circle off the image (home is not at the radar) can't be seen. Fewer than 12
-  rain pixels count as clutter, not rain.
+  circle off the image (home is not at the radar) can't be seen.
+- **What counts as rain** (for every decision; the poster still draws it
+  all): levels 2 and up, in connected clusters of at least 160 pixels
+  (10 km²). Level 1, BOM's faintest colour, never counts: on a clear night
+  ground clutter west of Sydney paints thousands of pixels of it, plus
+  scattered blobs of other levels no bigger than 76 pixels.
+- **Roughly the same frame, no redraw**: a new frame changes the alert id
+  only if the rain within 64 km of home arrived or left, its nearest edge
+  moved more than 5 km, its area changed by more than 25%, or its heaviest
+  band (blue, green, yellow/orange, red) changed. The hourly poster draws
+  the newest frame anyway.
 - **The poster** asks the frame for a faster redraw through `/alert.json`:
   in radar mode it carries `mode` and `min_gap_s` (240 with rain near home,
   600 otherwise), and the alert id gains `radar:<frame time>`. The frame clamps

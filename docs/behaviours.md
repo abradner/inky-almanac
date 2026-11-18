@@ -175,8 +175,15 @@ stays as it is, and hazard badges still sit over the radar.
 
 - **It ends by itself** at midnight, or once it has run at least 2 hours and
   the radar shows no rain. Press **C** again to leave sooner.
-- **While it rains within 64 km of home**, a USB-powered frame redraws for
-  each new radar frame (about every 5 minutes). Otherwise about every 10.
+- **While it rains within 64 km of home**, a USB-powered frame may redraw
+  for each new radar frame (about every 5 minutes), but only when the rain
+  near home has visibly changed: it arrived or left, moved more than 5 km
+  closer or further, grew or shrank by more than a quarter, or got heavier
+  or lighter by a colour band. Otherwise the radar redraws at most about
+  every 10 minutes, and the hourly redraw always shows the newest frame.
+- **Clutter isn't rain.** The faintest radar colour and small scattered
+  specks (under about 10 km²) are still drawn but don't count, so ground
+  clutter on a clear night can't hold radar mode open or speed it up.
 - **A new warning ends it**, so the warning's map can show. A reissue of a
   warning already in force doesn't.
 - **On battery** the radar shows at the usual hourly wakes; the faster

@@ -89,8 +89,9 @@ pale blue stipple, moderate rain blue and green, heavy rain yellow, orange and
 red. The side panel stays as it is, and hazard badges still sit over the
 picture.
 
-- **While it rains within 64 km of home**, the frame redraws for each new
-  radar frame, about every 5 minutes. Otherwise it redraws about every 10.
+- **While it rains within 64 km of home**, the frame redraws as often as
+  each new radar frame, about every 5 minutes, but only when the rain near
+  home has changed visibly. Otherwise it redraws at most about every 10.
 - **It ends by itself** at midnight, or once it has run 2 hours and the radar
   shows no rain at all. Press **C** again to leave sooner.
 - **A new warning ends it**, so the warning's map shows. A reissue of a
