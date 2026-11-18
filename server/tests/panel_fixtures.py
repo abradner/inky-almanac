@@ -56,6 +56,19 @@ PRESETS = {
                   "rainMm": 0, "wind": 22, "gust": 35, "windFrom": 7, "windTo": 7, "uv": 9, "dayCond": "partly",
                   "since9": 0, "lastHr": 0, "precis": "Hot. Gusty southerly change late afternoon", "dayRain": 30,
                   "mapMode": False, "hazard": "none", "observed": "coast"},
+    # A bitter winter morning for the README's extremes: −10° with sleet and
+    # snow (no WMO sleet code, so the snow sky) and a damaging westerly.
+    "bitter": {"date": "2026-07-15", "hour": 7, "tMin": -10, "tMax": 2, "tMinT": -8, "tMaxT": 4, "cond": "snow",
+               "dayCond": "snow", "rainP": 90, "rainMm": 6, "since9": 0, "lastHr": 2, "wind": 55, "gust": 100,
+               "windFrom": 6, "windTo": 6, "uv": 1,
+               "precis": "Bitterly cold. Sleet and snow showers. Damaging westerly winds", "dayRain": 90,
+               "rainRange": "5 to 15 mm", "mapMode": False, "longTitle": False, "hazard": "none"},
+    # A stormy early afternoon to sit beside the recorded heavy-rain radar
+    # frame (16 Nov 2026) and a warning map in the README posters.
+    "storm": {"date": "2026-11-16", "hour": 13, "tMin": 19, "tMax": 27, "tMinT": 17, "tMaxT": 24, "cond": "storm",
+              "dayCond": "storm", "rainP": 90, "rainMm": 9, "since9": 24, "lastHr": 8, "wind": 28, "gust": 52,
+              "windFrom": 3, "windTo": 4, "uv": 3, "precis": "Showers and storms. Heavy falls possible",
+              "dayRain": 95, "rainRange": "15 to 40 mm", "mapMode": False, "longTitle": False, "hazard": "none"},
 }
 
 WORST = ("worstPhoto", "worstMap", "worstCold")
@@ -188,8 +201,22 @@ def photo(s):
     return photos.Photo("fixture", title, "Photo: Basile Morin · CC BY-SA 4.0", landscape())
 
 
-def map_png(w=700, h=750):
-    """A synthetic warning map in BOM's colours (fitted to 448 x 480)."""
+def commons_photo():
+    """A real photo for the README posters: "Dülmen, Umland -- 2014 -- 7056"
+    by Dietmar Rabich, Wikimedia Commons, CC BY-SA 4.0. Committed already
+    dithered to the inks (cut from an earlier README poster), at the photo
+    area's 500 x 480, so it re-renders unchanged."""
+    from pathlib import Path
+
+    path = Path(__file__).resolve().parent / "fixtures" / "photos" / "commons-duelmen-umland.png"
+    return photos.Photo("commons-duelmen-umland", "Dülmen, Umland", "Photo: Dietmar Rabich · CC BY-SA 4.0",
+                        Image.open(path).convert("RGB"))
+
+
+def map_png(w=700, h=750, label=True):
+    """A synthetic warning map in BOM's colours (fitted to 448 x 480).
+    `label=False` leaves out the agency name, for illustrative stills that
+    must not pass for a real issued map."""
     img = Image.new("RGB", (w, h), (255, 242, 211))
     d = ImageDraw.Draw(img)
     d.polygon([(w, 0), (int(w * 0.74), 0), (int(w * 0.67), int(h * 0.62)), (int(w * 0.56), h), (w, h)], fill=(219, 237, 255))
@@ -198,7 +225,8 @@ def map_png(w=700, h=750):
     d.ellipse([300, 320, 350, 380], fill=(230, 50, 50))
     for x1, y1, x2, y2 in ((0, 250, 470, 220), (90, 0, 190, 750), (0, 520, 440, 560)):
         d.line([(x1, y1), (x2, y2)], fill=(128, 128, 128), width=2)
-    d.text((10, 10), "Bureau of Meteorology", fill=(0, 0, 0))
+    if label:
+        d.text((10, 10), "Bureau of Meteorology", fill=(0, 0, 0))
     for name, x, y in (("Chatswood", 356, 410), ("Ashfield", 325, 456), ("Sydney", 360, 515), ("Strathfield", 234, 437)):
         d.rectangle([x - 3, y - 3, x + 2, y + 2], fill=(0, 0, 255))
         d.text((x + 6, y - 6), name, fill=(0, 0, 255))
