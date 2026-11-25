@@ -120,6 +120,7 @@ def frame(monkeypatch, tmp_path):
     import almanac_frame as a
 
     a.STATE_FILE = str(tmp_path / "state.json")
+    a.MIGRATE_TO = None  # off unless a test turns it on (test_migrate.py)
     a.sd_ok = False
     monkeypatch.setattr(a, "mount_sd", lambda: None)
     monkeypatch.setattr(a, "data_dir", lambda: str(tmp_path))

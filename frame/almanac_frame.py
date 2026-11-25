@@ -38,6 +38,11 @@ LOG_MAX = 24 * 1024
 RETRY_MINUTES = (5, 10, 20, 30)
 CYCLE_DEADLINE_MS = 5 * 60 * 1000  # a cycle normally takes ~45 s
 ERROR_SCREEN_AFTER_S = 6 * 3600
+CONFIG_FILE = "config.py"
+# One-off move to a new renderer host (Nov 2026: epi-ctl to athena). Once this
+# release has committed, the board rewrites SERVER in config.py to this and
+# polls it from then on, reachable or not. None turns it off.
+MIGRATE_TO = "http://inky.asn.casa:8077"
 
 graphics = None
 decoder = None
@@ -305,6 +310,41 @@ def ota_commit():
         save_ota(s)
 
 
+def maybe_migrate():
+    """Point config.py's SERVER at MIGRATE_TO, once this version is committed.
+
+    Never during a trial: the trial has to prove itself against the server
+    that shipped it, or a failed trial would roll the code back with config
+    already moved, and the old code would poll the new host with no way back.
+    Rewrites only the SERVER line (appends one if missing), via a temp file
+    and an atomic rename, and switches the running config too. Returns True if
+    it moved."""
+    if not MIGRATE_TO or getattr(config, "SERVER", None) == MIGRATE_TO:
+        return False
+    if load_ota().get("trial"):
+        return False
+    with open(CONFIG_FILE) as f:
+        lines = f.read().split("\n")
+    new = 'SERVER = "%s"' % MIGRATE_TO
+    found = False
+    for i, line in enumerate(lines):
+        if "=" in line and line.split("=", 1)[0].strip() == "SERVER":
+            lines[i] = new
+            found = True
+    if not found:
+        if lines and lines[-1] == "":
+            lines.insert(len(lines) - 1, new)
+        else:
+            lines.append(new)
+    with open(CONFIG_FILE + ".tmp", "w") as f:
+        f.write("\n".join(lines))
+    os.rename(CONFIG_FILE + ".tmp", CONFIG_FILE)
+    old = getattr(config, "SERVER", None)
+    config.SERVER = MIGRATE_TO
+    log("migrated server:", old, "->", MIGRATE_TO)
+    return True
+
+
 def maybe_update(info, state):
     """Install a newer signed almanac_frame.py if the server offers one.
 
@@ -498,6 +538,10 @@ def cycle(state, force=False, shuffle=False, mode=None):
             state["alert_drawn_at"] = time.time()  # the next radar frame waits its gap from this draw
         if drew:
             ota_commit()  # this version just completed a refresh that drew
+        try:
+            maybe_migrate()  # after the commit: a trial never moves the server
+        except Exception as e:  # a failed rewrite leaves the old server in place
+            log("migrate failed:", repr(e))
         try:
             maybe_update(info, state)
         except Exception as e:  # an update problem must never cost a refresh
