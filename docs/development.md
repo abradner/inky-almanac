@@ -86,6 +86,9 @@ the last release, deploy with `OTA_KEY_FILE=` (empty) so the existing
 [operations.md](operations.md#over-the-air-updates) and
 [design.md](design.md#12-signed-over-the-air-updates).
 
+The cluster path (image from CI, frame release through `scripts/release-ota.sh`)
+is in [operations.md](operations.md#running-on-a-cluster).
+
 To run the renderer locally without a host to deploy to:
 
 ```bash

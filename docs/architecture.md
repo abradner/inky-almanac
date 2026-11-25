@@ -180,9 +180,19 @@ one rotation).
 | Script | Does |
 |---|---|
 | `scripts/deploy-server.sh [--usb]` | signs the frame code if `OTA_KEY_FILE` is set, rsyncs `server/` and `server.env` to `HOST`, runs the test image there, rebuilds and restarts the `inky-almanac` container (cache volume `inky-almanac-cache`, published on `BIND:8077`), waits for `/healthz` |
+| `.github/workflows/docker.yml` | tests, then publishes the generic multi-arch image to `ghcr.io/<owner>/inky-almanac` (sha tag on `main`, plus the tag name on `v*`) |
+| `scripts/release-ota.sh [KEY_FILE]` | signs a release with `sign_ota.py`, checks it, and prints the commands that load it into the cluster's `inky-almanac-ota` 1Password item |
 | `scripts/sign_ota.py [KEY_FILE]` | writes `server/ota/almanac_frame.py` and `manifest.json` (gitignored); `--new-key PATH` makes a key; refuses uncommitted frame code |
 | `scripts/deploy-frame.sh --local [PORT] ... --reset` | copies `main.py`, `almanac_frame.py`, `config.py` (and optionally `WIFI_CONFIG.py`, `OTA_KEY.py`) over USB, clears any OTA trial, resets the OTA baseline; without `--local` it runs `mpremote` on `HOST` |
 | `tools/build_uv_normals.py` | rebuilds the committed ARPANSA UV table (~400 MB of downloads) |
+
+On a cluster the renderer is the same image with its state moved out: settings
+arrive as `ALMANAC_*` environment variables, the signed frame release is
+mounted read-only at `/app/ota` (the code reads `ota/` next to `almanac/`, so
+the mount replaces whatever the image carries), and the only writable path is
+the cache directory (`ALMANAC_CACHE`, default `/var/cache/almanac`), which
+holds every file the server writes. See
+[operations.md](operations.md#running-on-a-cluster).
 
 ## Tests
 

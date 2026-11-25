@@ -88,13 +88,31 @@ reach the frame. The rule is per address, so **moving the renderer to
 another host needs a new rule**, and `BIND` in `deploy.env` must publish
 the container on the allowed address.
 
-**Use the renderer's IP, not its name, on the frame.** The renderer host's
-internal DNS name once started resolving to a public CDN address, and every
-refresh failed with `OSError(103)`. `SERVER` in `frame/config.py` is an IP
-for that reason. The same fault broke ssh by name; deploys connect to
-`$HOST` by IP with `SSH_HOST_KEY_ALIAS` set, so ssh still checks the host
-key pinned under the DNS name (`-o HostKeyAlias=... -o
+**Prefer the renderer's IP on the frame; use a name only if you own its record.**
+The renderer host's internal DNS name once started resolving to a public CDN
+address (a wildcard record under a public zone), and every refresh failed with
+`OSError(103)`. An IP can't do that, so `SERVER` in `frame/config.py` was an IP.
+A name is fine when it is a local A record you control (the renderer on a
+cluster sits behind a load-balancer address that a name hides): until that
+record exists the name falls through to the public wildcard, so the fetch fails
+and the frame retries on its normal back-off. The same fault broke ssh by name;
+deploys connect to `$HOST` by IP with `SSH_HOST_KEY_ALIAS` set, so ssh still
+checks the host key pinned under the DNS name (`-o HostKeyAlias=... -o
 StrictHostKeyChecking=yes`).
+
+**A cluster pod's cache is an `emptyDir`: normals refetch on every start.**
+The ERA5 normals (a 30-year pull) rebuild in the background after a restart,
+and the poster uses its placeholder until they finish; radar mode resets to
+off. Nothing is lost that the pod can't rebuild, but expect a slow first
+hour and don't read it as a fault. A durable cache (object storage) is the
+planned fix.
+
+**A startup probe needs minutes, not seconds.** The server warms every feed
+cache before it listens (up to about a minute on a cold cache), so until then
+`/healthz` refuses connections. A liveness probe that starts at once kills
+the pod in a loop. Give `/healthz` a startup probe with at least two minutes
+of budget and let liveness and readiness begin after it. The image's own
+`HEALTHCHECK` (docker only) polls every five minutes for the same reason.
 
 **An unset location renders Sydney, silently.** Without `server.env` the
 container uses the central-Sydney defaults; this happened after the move to
