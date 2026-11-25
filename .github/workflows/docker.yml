@@ -1,0 +1,187 @@
+name: Docker
+
+# Runs the server tests, then publishes the renderer image to
+# ghcr.io/<owner>/inky-almanac on a push to main and on `v*` tags.
+#
+# The image is generic: it holds no location, no settings and no signed frame
+# release. The deployment supplies the ALMANAC_* settings as environment
+# variables and mounts the signed release (manifest.json + almanac_frame.py)
+# at /app/ota. See docs/operations.md, "Running on a cluster".
+#
+# Tags: the long commit sha on every run, plus the tag name on a `v*` tag
+# push. There is deliberately no :latest: consumers pin by digest, and a
+# floating tag is a rollback hazard when releases can finish out of order.
+# A workflow_dispatch builds and publishes the sha tag only (it accepts any
+# ref, including an old release tag, so it must never apply a version tag).
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    tags:
+      - "v*"
+
+# Not cancel-in-progress: two quick merges should each publish their own sha.
+concurrency:
+  group: docker-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  IMAGE: ghcr.io/${{ github.repository }}
+
+jobs:
+  # The same command docs/development.md gives. In docker because the layout
+  # tests need the DejaVu fonts the image installs.
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Server tests
+        run: |
+          docker build -f server/Dockerfile.test -t inky-almanac-test server
+          docker run --rm inky-almanac-test python -m pytest -q
+
+  # Each architecture builds on a NATIVE runner and pushes an untagged,
+  # by-digest image; `merge` stitches them into one multi-arch tag. The
+  # cluster has both amd64 and arm64 workers, and emulated arm64 builds are
+  # several times slower and dearer. Same shape as the atmosphere repo's
+  # docker.yml.
+  build:
+    needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - name: linux/amd64
+            runner: ubuntu-latest
+          - name: linux/arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.platform.runner }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      # "linux/arm64" -> "linux-arm64", for artifact names and cache scopes.
+      - name: Normalise platform name
+        run: echo "PLATFORM_SLUG=${PLATFORM//\//-}" >> "$GITHUB_ENV"
+        env:
+          PLATFORM: ${{ matrix.platform.name }}
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Pushed by digest only -- no tags here. Tagging happens once, in the
+      # merge job, so a tag never briefly points at a single-arch image.
+      - id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: server
+          file: server/Dockerfile
+          platforms: ${{ matrix.platform.name }}
+          outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=${{ env.PLATFORM_SLUG }}
+          cache-to: type=gha,mode=max,scope=${{ env.PLATFORM_SLUG }}
+
+      - name: Export digest
+        run: |
+          # The platform-slug DIRECTORY is load bearing: the merge job checks
+          # which architectures produced a digest, not just how many.
+          mkdir -p "/tmp/digests/${PLATFORM_SLUG}"
+          touch "/tmp/digests/${PLATFORM_SLUG}/${DIGEST#sha256:}"
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: digest-${{ env.PLATFORM_SLUG }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  merge:
+    needs: build
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 10
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: /tmp/digests
+          pattern: digest-*
+          merge-multiple: true
+
+      # Refuse to publish tags on a partial digest set: with fail-fast off a
+      # leg can fail while the other succeeds, and a re-run can find one
+      # leg's artifact expired. That would publish a single-arch image under
+      # the full tag set, which fails at pull time, on the cluster.
+      - name: Verify both architectures produced a digest
+        working-directory: /tmp/digests
+        run: |
+          shopt -s nullglob
+          for slug in linux-amd64 linux-arm64; do
+            files=("$slug"/*)
+            if [ "${#files[@]}" -ne 1 ]; then
+              echo "platform $slug: expected exactly 1 digest, found ${#files[@]}" >&2
+              exit 1
+            fi
+          done
+          for dir in */; do
+            case "${dir%/}" in
+              linux-amd64|linux-arm64) ;;
+              *) echo "unexpected platform directory: ${dir%/}" >&2; exit 1 ;;
+            esac
+          done
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE }}
+          # The version tag comes from a tag PUSH only; see the header.
+          tags: |
+            type=ref,event=tag,enable=${{ github.event_name == 'push' }}
+            type=sha,format=long
+
+      - name: Resolve the final tag set
+        run: |
+          set -euo pipefail
+          jq -r '.tags[]' <<< "$DOCKER_METADATA_OUTPUT_JSON" > /tmp/final-tags
+          # An empty tag set would publish an untagged manifest and exit green.
+          if [ ! -s /tmp/final-tags ]; then
+            echo "metadata-action produced no tags; refusing to publish" >&2
+            exit 1
+          fi
+          echo "Tagging the manifest as:"; sed 's/^/  /' /tmp/final-tags
+
+      - name: Create multi-arch manifest
+        working-directory: /tmp/digests
+        run: |
+          set -euo pipefail
+          docker buildx imagetools create \
+            $(sed 's/^/-t /' /tmp/final-tags | tr '\n' ' ') \
+            $(for f in */*; do printf "${IMAGE}@sha256:%s " "${f##*/}"; done)
+
+      # Print the digest: this is what the cluster manifest pins.
+      - name: Inspect
+        run: |
+          tag=$(head -1 /tmp/final-tags)
+          echo "Inspecting $tag"
+          docker buildx imagetools inspect "$tag"
+          digest=$(docker buildx imagetools inspect "$tag" --format '{{.Manifest.Digest}}')
+          echo "::notice title=Image digest::${IMAGE}@${digest}"
+          echo "${IMAGE}@${digest}" >> "$GITHUB_STEP_SUMMARY"
