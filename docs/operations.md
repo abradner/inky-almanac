@@ -72,7 +72,8 @@ password manager:
    `sign_ota.py`), re-checks the manifest against the file, and prints the
    exact commands for the next steps.
 2. Attach `manifest.json` and `almanac_frame.py` to the `inky-almanac-ota`
-   item with the printed `op item edit ... 'name[file]=path'` command. Files,
+   item with the printed `op item edit ... 'manifest\.json[file]=path'`
+   command. The dots are escaped, or op splits each name into a section and a field. Files,
    not text fields: the frame checks the sha256, so the bytes must arrive
    exactly as signed.
 3. Force the sync of the `inky-almanac-ota` ExternalSecret (printed too), or

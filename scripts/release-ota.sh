@@ -45,14 +45,17 @@ PY
 # File attachments, not text fields: an attachment is byte-exact, and the
 # frame's sha256 check would fail on a trailing newline or a CRLF that a field
 # normalised. No file content goes through argv: `[file]=` takes a path.
+# The dots are escaped: op reads an unescaped `.` in an assignment as
+# section.field, so `manifest.json[file]=` attaches a file named "json" in a
+# section "manifest" (seen 25 Nov 2026), which the ExternalSecret can't find.
 cat <<EOF
 
 Publish (run these yourself; the vault must be unlocked):
 
   # 1. Attach both files to the item.
   op item edit '$item' --vault '$vault' \\
-    'manifest.json[file]=$out/manifest.json' \\
-    'almanac_frame.py[file]=$out/almanac_frame.py'
+    'manifest\\.json[file]=$out/manifest.json' \\
+    'almanac_frame\\.py[file]=$out/almanac_frame.py'
 
   # 2. Check the item holds each name exactly ONCE. The ExternalSecret
   #    refuses a name that matches two attachments; if this prints a name
